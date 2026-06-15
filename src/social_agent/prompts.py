@@ -127,26 +127,21 @@ AB（受众广度）适当降权——小红书允许小众共鸣，不需要讨
         "system_addon": """
 ## 抖音/短视频特别要求
 
-格式：短视频口播文案 + 画面提示。
-- 总长度 200-500 字（约 60-90 秒口播）
-- 前 3 秒必须有强「钩子」，吸引用户停留
-- 使用口语化短句，适合朗读
-- 按照「钩子→问题→解决方案→行动号召」结构
-- 用「[]」标注画面提示 / 字幕重点
-- 整体节奏：快、密、有冲击力
+格式：纯口播文案，不要写任何画面提示或镜头标注。
 
-示例节奏：
-[画面：快速切屏]
-你知道吗？[停一帧] AI Agent 已经在悄悄取代中层管理者了。
-[画面：数据分析图]
-不是危言耸听，这是正在发生的事...
+- 前 3 秒必须有强「钩子」，用反直觉断言、数据、或尖锐问题开场
+- 口语化短句，适合朗读，自然停顿
+- 结构：钩子 → 展开 → 冲击 → 收尾，信息密度要高
+- 根据素材内容的深度自行决定篇幅，不要刻意缩短——好的内容值得讲透
+- 参考素材中的案例和数据，用它们来展开论述
+- 整体节奏：快、密、有冲击力，但不牺牲论证完整性
+
+禁止：以"最近""随着""大家好"等废话开场。禁止写 [画面：xxx] [字幕] 等导演标注。
 
 ## 7维评分侧重点
-抖音的核心是完播率 → HP（钩子强度）是绝对第一优先级，前 3 秒定生死。
-其次是 QL（金句密度）——抖音用户习惯截图分享评论区，内容里的金句就是传播货币。
-NA（叙事性）可以压缩，抖音不需要三幕结构，钩子→冲击→结束就行。
-AB（受众广度）尽量拉高——抖音算法推流给泛人群，太垂直没人看。""",
-        "char_limit": 500,
+严格遵循创作质量清单的 7 个维度，不得跳过。在此基础上：
+HP（钩子强度）绝对第一优先——前3秒定生死。QL（金句密度）是抖音的传播货币。AB（受众广度）尽量拉高让算法推流。SR（社会共振）要尖锐不要温和。""",
+        "char_limit": 2000,
     },
     "twitter": {
         "system_addon": """
@@ -257,28 +252,65 @@ ALL_PLATFORMS = sorted(PLATFORM_PROMPTS.keys())
 
 
 # ═══════════════════════════════════════════════
+# 内容情绪配置
+# ═══════════════════════════════════════════════
+
+EMOTIONS = {
+    "passionate": {"label": "🔥 激情澎湃", "addon": "用充满感染力的语言，大量短句和排比，感叹号和反问贯穿全文。让读者感受到你对这个领域的狂热信仰和不容置疑的信念。"},
+    "calm": {"label": "🧊 冷静理性", "addon": "克制情绪化表达，用数据和逻辑构建论证，像在写一份严谨的分析报告。让读者信服于你的分析深度，而不是你的音量。"},
+    "warm": {"label": "🌿 温暖治愈", "addon": "用故事和共情开场，承认读者的焦虑和困惑。你不是高高在上的专家，而是一个理解他们处境的朋友。先治愈，再启发。"},
+    "sharp": {"label": "⚡ 犀利批判", "addon": "直指行业痛点和荒谬之处，不回避争议。用锋利的类比和反讽让读者拍案叫绝。语言要有刺，观点要有准星。"},
+    "humorous": {"label": "😄 幽默轻松", "addon": "用自嘲、类比和轻松的调侃降低阅读门槛。让一个不懂技术的朋友也能笑着读完，并在笑声中获得洞察。"},
+    "urgent": {"label": "🚨 紧迫危机", "addon": "制造FOMO感——制造紧迫感和危机意识。让读者觉得不立刻行动就会被淘汰。用倒计时式的语言，但这扇窗正在关闭。"},
+    "inspiring": {"label": "🌟 鼓舞激励", "addon": "乐观积极的未来视角。描绘一个值得向往的图景，让读者读完想立刻开始行动。充满可能性和希望。"},
+    "deep": {"label": "🔮 深度思考", "addon": "哲学式追问，从表象层层剥到本质。不满足于表面的解释，每一个观点都要追问「为什么」。适合深度长文，像在写一篇思想随笔。"},
+}
+
+# 向后兼容：把旧的 tone_variant 映射到新 emotion
+_TONE_TO_EMOTION = {
+    "standard": "passionate",
+    "hype": "urgent",
+    "balanced": "calm",
+}
+
+ALL_EMOTIONS = sorted(EMOTIONS.keys())
+
+
+def _build_emotion_addon(emotion: str) -> str:
+    """根据情绪键值生成 prompt 注入指令，含标题和标签指引。"""
+    if emotion in _TONE_TO_EMOTION:
+        emotion = _TONE_TO_EMOTION[emotion]
+    em = EMOTIONS.get(emotion, EMOTIONS["passionate"])
+    return f"\n\n## 内容情绪要求\n{em['addon']}"
+
+
+# ═══════════════════════════════════════════════
 # 构建生成消息
 # ═══════════════════════════════════════════════
 
 def build_generation_messages(
     knowledge_entry: dict,
     platform: str,
-    tone_variant: str = "standard",
+    tone_variant: str = "passionate",
+    generate_title: bool = True,
+    generate_tags: bool = True,
 ) -> list[dict]:
-    """构建 LLM 调用消息列表：布道 persona + 平台适配 + 知识条目内容。"""
+    """构建 LLM 调用消息列表（v1 向后兼容）。"""
     platform_config = PLATFORM_PROMPTS[platform]
 
-    # 基调微调
-    tone_addon = ""
-    if tone_variant == "hype":
-        tone_addon = "\n\n额外指令：这次的风格要更加激进、更加煽动，使用更多感叹号和大胆的预测。"
-    elif tone_variant == "balanced":
-        tone_addon = "\n\n额外指令：这次的风格要更加冷静、更加理性，注重数据分析和逻辑推演，减少情绪化表达。"
+    emotion_addon = _build_emotion_addon(tone_variant)
 
-    # 组装系统消息
-    system = AI_BUDAO_PERSONA + "\n\n" + platform_config["system_addon"] + tone_addon
+    # 标题/标签指令
+    output_addon = "\n\n## 输出格式"
+    if generate_title and generate_tags:
+        output_addon += "\n第一行输出标题（20字以内）。正文结束后另起一行输出 5-8 个 #标签。"
+    elif generate_title:
+        output_addon += "\n第一行输出标题（20字以内）。"
+    elif generate_tags:
+        output_addon += "\n正文结束后另起一行输出 5-8 个 #标签。"
 
-    # 截断过长的总结（8000 字足够覆盖所有平台上限）
+    system = AI_BUDAO_PERSONA + "\n\n" + platform_config["system_addon"] + emotion_addon + output_addon
+
     summary = knowledge_entry.get("summary_markdown", "") or ""
     if len(summary) > 8000:
         summary = summary[:8000] + "\n\n[内容过长，已截断...]"
@@ -299,7 +331,7 @@ def build_generation_messages(
     if custom:
         user += f"\n## 补充要求\n{custom}\n"
 
-    user += f"\n---\n请生成 {platform_config['char_limit']} 字以内的 {PLATFORM_NAMES_CN[platform]} 内容。只输出正文内容，不要额外说明（如'好的，以下是...'）。"
+    user += f"\n---\n请生成 {platform_config['char_limit']} 字以内的 {PLATFORM_NAMES_CN[platform]} 内容。只输出正文内容，不要额外说明。"
 
     return [
         {"role": "system", "content": system},
@@ -343,7 +375,9 @@ STYLE_DRIVEN_ADDON = """
 def build_generation_messages_v2(
     bundle,  # ContextBundle
     platform: str,
-    tone_variant: str = "standard",
+    tone_variant: str = "passionate",
+    generate_title: bool = True,
+    generate_tags: bool = True,
 ) -> list[dict]:
     """v2 构建 LLM 调用消息 — 支持知识驱动和风格驱动双模式。
 
@@ -357,12 +391,16 @@ def build_generation_messages_v2(
     """
     platform_config = PLATFORM_PROMPTS[platform]
 
-    # 基调微调
-    tone_addon = ""
-    if tone_variant == "hype":
-        tone_addon = "\n\n额外指令：这次的风格要更加激进、更加煽动，使用更多感叹号和大胆的预测。"
-    elif tone_variant == "balanced":
-        tone_addon = "\n\n额外指令：这次的风格要更加冷静、更加理性，注重数据分析和逻辑推演，减少情绪化表达。"
+    emotion_addon = _build_emotion_addon(tone_variant)
+
+    # 标题/标签输出指令
+    output_addon = ""
+    if generate_title and generate_tags:
+        output_addon = "\n\n## 输出格式\n第一行输出标题（20字以内）。正文结束后另起一行输出 5-8 个 #标签。"
+    elif generate_title:
+        output_addon = "\n\n## 输出格式\n第一行输出标题（20字以内）。"
+    elif generate_tags:
+        output_addon = "\n\n## 输出格式\n正文结束后另起一行输出 5-8 个 #标签。"
 
     # 根据模式选择不同的 system prompt
     if bundle.has_knowledge:
@@ -379,7 +417,8 @@ def build_generation_messages_v2(
         AI_BUDAO_PERSONA + "\n\n"
         + mode_addon + "\n\n"
         + platform_config["system_addon"]
-        + tone_addon
+        + emotion_addon
+        + output_addon
         + opt_addon
     )
 

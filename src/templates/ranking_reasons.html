@@ -68,6 +68,12 @@
     <p class="text-[10px] text-zinc-400 dark:text-zinc-500 mt-3">
         勾选的条目将作为创作素材。取消勾选 = 不使用这条。你可以点每条展开查看内容后再决定。
     </p>
+    <div class="text-right mt-2">
+        <button class="text-[10px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                onclick="htmx.ajax('GET', '/api/agent/generate/{{ entry_id }}/ranking', {target:'#ranking-section', swap:'innerHTML'}); this.blur();">
+            🔄 刷新分析
+        </button>
+    </div>
 </div>
 
 <style>

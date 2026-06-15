@@ -26,12 +26,11 @@
                       {% if current_status == 'approved' %}bg-white dark:bg-zinc-700 text-emerald-700 dark:text-emerald-400 shadow-sm{% else %}text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300{% endif %}">
                 已通过
             </a>
-            <a href="/agent/drafts?status=rejected"
-               class="px-3 py-1.5 rounded-md text-[12px] transition-colors
-                      {% if current_status == 'rejected' %}bg-white dark:bg-zinc-700 text-red-600 dark:text-red-400 shadow-sm{% else %}text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300{% endif %}">
-                已驳回
-            </a>
         </div>
+        <a href="/agent/trash"
+           class="text-[12px] text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors">
+            🗑 回收站
+        </a>
 
         {% if all_platforms %}
         <select onchange="location.href='/agent/drafts?status={{ current_status }}&platform='+this.value"
@@ -45,55 +44,79 @@
         {% endif %}
     </div>
 
-    <!-- 草稿表格 -->
-    <div class="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-2d overflow-hidden">
-        {% if drafts %}
-        <table class="w-full">
-            <thead>
-                <tr class="border-b border-zinc-100 dark:border-zinc-800">
-                    <th class="text-left px-4 py-3 text-[10px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">标题</th>
-                    <th class="text-left px-4 py-3 text-[10px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">平台</th>
-                    <th class="text-left px-4 py-3 text-[10px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">状态</th>
-                    <th class="text-left px-4 py-3 text-[10px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">版本</th>
-                    <th class="text-right px-4 py-3 text-[10px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">更新时间</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for d in drafts %}
-                <tr class="border-b border-zinc-50 dark:border-zinc-800/50 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors">
-                    <td class="px-4 py-3">
-                        <a href="/agent/draft/{{ d.id }}" class="text-[13px] font-medium text-zinc-800 dark:text-zinc-200 truncate max-w-[300px] block hover:text-zinc-900 dark:hover:text-zinc-100">{{ d.title or '?' }}</a>
-                    </td>
-                    <td class="px-4 py-3">
-                        <span class="text-[12px]">
+    <!-- 分组草稿列表 -->
+    {% if groups %}
+    <div class="space-y-5">
+        {% for group in groups %}
+        <div class="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-2d overflow-hidden">
+            <!-- 分组标题 -->
+            <div class="px-4 py-3 bg-zinc-50 dark:bg-zinc-800/50 border-b border-zinc-100 dark:border-zinc-800">
+                <div class="flex items-center gap-2">
+                    <span class="text-[10px] font-mono text-zinc-400">#{{ group.knowledge_id }}</span>
+                    <span class="text-[13px] font-medium text-zinc-700 dark:text-zinc-300 truncate">{{ group.entry_title[:60] }}</span>
+                    <span class="text-[10px] text-zinc-400">{{ group.drafts|length }} 个版本</span>
+                    <button onclick="deleteGroup({{ group.knowledge_id }})"
+                            class="ml-auto text-[10px] px-2 py-1 text-zinc-300 dark:text-zinc-600 hover:text-red-500 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors">
+                        🗑 删除全部
+                    </button>
+                </div>
+            </div>
+            <!-- 版本列表 -->
+            <div class="divide-y divide-zinc-50 dark:divide-zinc-800/50">
+                {% for d in group.drafts %}
+                <div class="flex items-center px-4 py-2.5 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors group">
+                    <div class="flex-1 min-w-0 flex items-center gap-3">
+                        <a href="/agent/draft/{{ d.id }}" class="text-[13px] font-medium text-zinc-800 dark:text-zinc-200 truncate hover:text-zinc-900 dark:hover:text-zinc-100">
+                            {{ d.title or '?' }}
+                        </a>
+                        <span class="text-[12px] shrink-0">
                             {% set meta = platforms_meta.get(d.platform, {}) %}
                             {{ meta.get('icon', '') }}
                         </span>
-                        <span class="text-[11px] text-zinc-500 dark:text-zinc-400 ml-1">{{ meta.get('name', d.platform) }}</span>
-                    </td>
-                    <td class="px-4 py-3">
+                    </div>
+                    <div class="flex items-center gap-3 shrink-0">
                         <span class="text-[9px] px-2 py-0.5 rounded-full font-medium
                             {% if d.status == 'approved' %}bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400
                             {% elif d.status == 'rejected' %}bg-red-50 dark:bg-red-900/30 text-red-500 dark:text-red-400
                             {% else %}bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400{% endif %}">
                             {% if d.status == 'approved' %}已通过
                             {% elif d.status == 'rejected' %}已驳回
-                            {% else %}草稿{% endif %}
+                            {% else %}v{{ d.version }}{% endif %}
                         </span>
-                    </td>
-                    <td class="px-4 py-3 text-[11px] text-zinc-400 dark:text-zinc-500">v{{ d.version }}</td>
-                    <td class="px-4 py-3 text-right text-[10px] text-zinc-400 dark:text-zinc-500 font-mono"><time datetime="{{ d.updated_at }}">{{ d.updated_at[:16] }}</time></td>
-                </tr>
+                        <span class="text-[10px] text-zinc-400 dark:text-zinc-500 font-mono w-16 text-right"><time datetime="{{ d.updated_at }}">{{ d.updated_at[5:16] }}</time></span>
+                        <button onclick="deleteDraft({{ d.id }})"
+                                class="text-[10px] text-zinc-300 dark:text-zinc-600 hover:text-red-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all">
+                            🗑
+                        </button>
+                    </div>
+                </div>
                 {% endfor %}
-            </tbody>
-        </table>
-        {% else %}
-        <div class="flex flex-col items-center justify-center py-20 text-zinc-400 dark:text-zinc-500">
-            <p class="text-[13px]">暂无草稿</p>
-            <p class="text-[11px] mt-1">选择知识条目生成内容</p>
+            </div>
         </div>
-        {% endif %}
+        {% endfor %}
     </div>
+    {% else %}
+    <div class="flex flex-col items-center justify-center py-20 text-zinc-400 dark:text-zinc-500">
+        <p class="text-[13px]">暂无草稿</p>
+        <p class="text-[11px] mt-1">选择知识条目生成内容</p>
+    </div>
+    {% endif %}
 </div>
+
+<script>
+async function deleteDraft(id) {
+    if (!confirm('确定删除这条草稿吗？此操作不可撤销。')) return;
+    const resp = await fetch('/api/agent/draft/' + id, { method: 'DELETE' });
+    if (resp.ok) location.reload();
+    else alert('删除失败');
+}
+async function deleteGroup(kid) {
+    if (!confirm('确定删除这个知识条目下的全部草稿吗？此操作不可撤销。')) return;
+    const resp = await fetch('/api/agent/drafts/group/' + kid, { method: 'DELETE' });
+    const data = await resp.json();
+    if (data.ok) location.reload();
+    else alert('删除失败');
+}
+</script>
 
 {% endblock %}

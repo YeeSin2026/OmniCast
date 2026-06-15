@@ -17,6 +17,9 @@ DB_PATH = os.getenv("OMNICAST_DB_PATH", os.path.expanduser("~/.omnicast/drafts.d
 COSYVOICE_API_URL = os.getenv("COSYVOICE_API_URL", "http://localhost:50000")
 AUDIO_OUTPUT_DIR = os.getenv("AUDIO_OUTPUT_DIR", os.path.expanduser("~/.omnicast/audio"))
 
+# 回收站自动清理天数（0=不自动清理）
+AUTO_TRASH_DAYS = int(os.getenv("AUTO_TRASH_DAYS", "7"))
+
 # 服务
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8081"))

@@ -106,6 +106,54 @@ async def predict_performance(content_text: str, scores: dict, platform: str = "
         return {"headline_bucket": "unknown", "central_estimate": 0, "distribution": {}, "reason": f"预测失败: {str(e)[:80]}", "risk_factor": "N/A", "_error": True}
 
 
+async def score_title(title: str, platform: str = "") -> dict:
+    """对标题单独打分（0-10）。"""
+    prompt = f"""你是社媒内容标题评委。对以下 {platform} 标题打分（0-10 整数）。
+
+标准：
+- 钩子强度：前3秒能不能逼人停下来（0-5分）
+- 信息量/好奇心差：看完标题想不想点进去（0-3分）
+- 简洁有力：有没有废话（0-2分）
+
+标题：{title[:120]}
+
+只输出 JSON：{{"score": int, "hook": int, "curiosity": int, "brevity": int, "comment": "一句话"}}"""
+    try:
+        result = await chat(
+            [{"role": "user", "content": prompt}],
+            temperature=0.2, max_tokens=200, timeout=30,
+        )
+        result = result.strip()
+        if result.startswith("```"): result = result.split("\n", 1)[-1].rstrip("```")
+        return json.loads(result)
+    except Exception as e:
+        return {"score": 0, "comment": f"打分失败: {str(e)[:60]}", "_error": True}
+
+
+async def score_tags(tags_text: str, platform: str = "") -> dict:
+    """对标签打分（0-10）。"""
+    prompt = f"""你是社媒内容标签评委。对以下 {platform} 标签打分（0-10 整数）。
+
+标准：
+- 覆盖度：是否覆盖了核心话题/关键词（0-4分）
+- 热度：是否使用了有搜索量的标签（0-3分）
+- 精确度：标签是否精准匹配内容而不是泛标签（0-3分）
+
+标签：{tags_text[:200]}
+
+只输出 JSON：{{"score": int, "coverage": int, "popularity": int, "precision": int, "comment": "一句话"}}"""
+    try:
+        result = await chat(
+            [{"role": "user", "content": prompt}],
+            temperature=0.2, max_tokens=200, timeout=30,
+        )
+        result = result.strip()
+        if result.startswith("```"): result = result.split("\n", 1)[-1].rstrip("```")
+        return json.loads(result)
+    except Exception as e:
+        return {"score": 0, "comment": f"打分失败: {str(e)[:60]}", "_error": True}
+
+
 async def score_and_predict(content_text: str, platform: str = "") -> dict:
     scores = await score_content(content_text, platform)
     if not scores.get("_error"):

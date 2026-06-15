@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}回收站 — OmniCast{% endblock %}
+{% block content %}
+
+<div class="max-w-7xl mx-auto">
+    <div class="mb-5 flex items-center justify-between">
+        <div>
+            <h1 class="text-[16px] font-bold text-zinc-900 dark:text-zinc-200">🗑 回收站</h1>
+            <p class="text-[12px] text-zinc-500 dark:text-zinc-400 mt-1">已删除的草稿，到期自动清理</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <!-- 自动清理天数 -->
+            <form class="flex items-center gap-2" onsubmit="setAutoDays(event)">
+                <span class="text-[11px] text-zinc-400">自动清理</span>
+                <input type="number" id="auto-days" value="{{ auto_days }}" min="1" max="365"
+                       class="w-16 px-2 py-1 text-[12px] border border-zinc-200 dark:border-zinc-700 rounded bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 outline-none">
+                <span class="text-[11px] text-zinc-400">天后</span>
+                <button type="submit" class="text-[11px] px-2 py-1 bg-zinc-100 dark:bg-zinc-800 text-zinc-500 rounded hover:bg-zinc-200 dark:hover:bg-zinc-700">保存</button>
+            </form>
+            <button onclick="emptyTrash()"
+                    class="text-[12px] px-3 py-1.5 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors">
+                清空回收站
+            </button>
+        </div>
+    </div>
+
+    {% if items %}
+    <div class="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-2d overflow-hidden">
+        <table class="w-full">
+            <thead>
+                <tr class="border-b border-zinc-100 dark:border-zinc-800">
+                    <th class="text-left px-4 py-3 text-[10px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">标题</th>
+                    <th class="text-left px-4 py-3 text-[10px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">平台</th>
+                    <th class="text-left px-4 py-3 text-[10px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">删除时间</th>
+                    <th class="text-right px-4 py-3 text-[10px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for d in items %}
+                <tr class="border-b border-zinc-50 dark:border-zinc-800/50">
+                    <td class="px-4 py-3">
+                        <span class="text-[13px] text-zinc-600 dark:text-zinc-400 truncate max-w-[300px] block">{{ d.title or '?' }}</span>
+                    </td>
+                    <td class="px-4 py-3">
+                        <span class="text-[12px]">
+                            {% set meta = platforms_meta.get(d.platform, {}) %}
+                            {{ meta.get('icon', '') }} {{ meta.get('name', d.platform) }}
+                        </span>
+                    </td>
+                    <td class="px-4 py-3 text-[11px] text-zinc-400 dark:text-zinc-500 font-mono">
+                        <time datetime="{{ d.deleted_at or '' }}">{{ (d.deleted_at or '')[:16] }}</time>
+                    </td>
+                    <td class="px-4 py-3 text-right">
+                        <button onclick="restoreDraft({{ d.id }})"
+                                class="text-[11px] px-2 py-1 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 rounded transition-colors">
+                            恢复
+                        </button>
+                        <button onclick="permanentDelete({{ d.id }})"
+                                class="text-[11px] px-2 py-1 text-red-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors">
+                            永久删除
+                        </button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="flex flex-col items-center justify-center py-20 text-zinc-400 dark:text-zinc-500">
+        <p class="text-[13px]">回收站为空</p>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+async function restoreDraft(id) {
+    const resp = await fetch('/api/agent/draft/' + id + '/restore', { method: 'POST' });
+    if (resp.ok) location.reload();
+}
+async function permanentDelete(id) {
+    if (!confirm('永久删除后不可恢复，确定吗？')) return;
+    const resp = await fetch('/api/agent/draft/' + id + '/permanent', { method: 'DELETE' });
+    if (resp.ok) location.reload();
+}
+async function emptyTrash() {
+    if (!confirm('确定清空回收站？所有内容将被永久删除。')) return;
+    const resp = await fetch('/api/agent/trash/empty', { method: 'POST' });
+    if (resp.ok) location.reload();
+}
+async function setAutoDays(e) {
+    e.preventDefault();
+    const days = document.getElementById('auto-days').value;
+    await fetch('/api/agent/trash/auto-days', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'days=' + days,
+    });
+    location.reload();
+}
+</script>
+
+{% endblock %}

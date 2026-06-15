@@ -24,7 +24,7 @@ def register_routes(app, jinja_env, render_func):
     from .store import DraftStore
     from .generator import generate_for_platforms, generate_for_platforms_v2
     from .resolver import KnowledgeResolver
-    from .scorer import score_and_predict
+    from .scorer import score_and_predict, score_title, score_tags
     from .prompts import ALL_PLATFORMS, PLATFORM_META
 
     draft_store = DraftStore()
@@ -126,13 +126,39 @@ def register_routes(app, jinja_env, render_func):
         status: str = Query(""),
         platform: str = Query(""),
     ):
-        s = status if status in ("draft", "approved", "rejected") else None
+        s = status if status in ("draft", "approved") else None
         p = platform if platform in ALL_PLATFORMS else None
-        drafts = draft_store.list_recent(limit=50, status=s, platform=p)
+        all_drafts = draft_store.list_recent(limit=100, status=s, platform=p)
+
+        # 按 knowledge_id 分组
+        groups = {}  # knowledge_id → {"entry_title": ..., "drafts": [...]}
+        for d in all_drafts:
+            kid = d.get("knowledge_id", 0)
+            if kid not in groups:
+                # 尝试获取知识条目标题
+                entry = None
+                try:
+                    entry = await connector.get_entry(kid)
+                except Exception:
+                    pass
+                groups[kid] = {
+                    "knowledge_id": kid,
+                    "entry_title": entry.get("title", f"知识 #{kid}") if entry else f"知识 #{kid}",
+                    "drafts": [],
+                }
+            groups[kid]["drafts"].append(d)
+
+        # 按每组最新草稿时间倒序
+        sorted_groups = sorted(
+            groups.values(),
+            key=lambda g: max(d.get("updated_at", "") for d in g["drafts"]),
+            reverse=True,
+        )
+
         return HTMLResponse(render_func(
             "agent_drafts.html",
             request=request,
-            drafts=drafts,
+            groups=sorted_groups,
             platforms_meta=PLATFORM_META,
             all_platforms=ALL_PLATFORMS,
             current_status=status,
@@ -141,17 +167,61 @@ def register_routes(app, jinja_env, render_func):
 
     @app.get("/agent/draft/{draft_id}", response_class=HTMLResponse)
     async def agent_draft_detail(request: Request, draft_id: int):
+        import re as _re
         draft = draft_store.get_by_id(draft_id)
         if not draft:
             raise HTTPException(404, "草稿未找到")
-        # 尝试从 OmniVault 获取原始知识条目
         entry = await connector.get_entry(draft["knowledge_id"])
+
+        # 解析内容：标题 / 标签 / 正文
+        raw = draft.get("content_text", "")
+        lines = raw.split("\n")
+        tag_lines = []
+        body_lines = []
+        for line in lines:
+            s = line.strip()
+            if s.startswith("#") and not s.startswith("##") and len(s) < 80:
+                tag_lines.append(s)
+            else:
+                body_lines.append(line)
+
+        title_line = ""
+        content_lines = []
+        for line in body_lines:
+            s = line.strip()
+            if not title_line and s:
+                title_line = s
+            elif title_line:
+                content_lines.append(line)
+        body_text = "\n".join(content_lines).strip()
+
+        # 清洗特殊字符（用于展示）
+        clean = body_text
+        # 去掉所有 markdown 标记
+        clean = _re.sub(r'\*\*(.+?)\*\*', r'\1', clean)  # 加粗
+        clean = _re.sub(r'\*(.+?)\*', r'\1', clean)       # 斜体
+        clean = clean.replace('**', '').replace('__', '').replace('`', '')
+        # 去掉画面导演标注
+        clean = _re.sub(r'\[画面[：:][^\]]*\]', '', clean)
+        clean = _re.sub(r'\[字幕[：:][^\]]*\]', '', clean)
+        clean = _re.sub(r'\[停[^\]]*\]', '', clean)
+        # 去掉 markdown 链接
+        clean = _re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', clean)
+        # 去掉行首标记符号
+        clean = _re.sub(r'^[#>*-]\s+', '', clean, flags=_re.MULTILINE)
+        # 合并多余空行
+        clean = _re.sub(r'\n{3,}', '\n\n', clean)
+        clean = clean.strip()
+
         return HTMLResponse(render_func(
             "agent_detail.html",
             request=request,
             draft=draft,
             entry=entry,
             platform_meta=PLATFORM_META.get(draft["platform"], {}),
+            title_line=title_line,
+            body_text=clean,
+            tag_lines=tag_lines,
         ))
 
     # ═══════════════════════════════════════════
@@ -251,9 +321,11 @@ def register_routes(app, jinja_env, render_func):
         request: Request,
         knowledge_id: int = Form(...),
         topic: str = Form(""),
-        tone_variant: str = Form("standard"),
+        tone_variant: str = Form("passionate"),
         max_related: int = Form(5),
         selected_ids: str = Form(""),
+        generate_title: bool = Form(False),
+        generate_tags: bool = Form(False),
     ):
         """v2 生成 — 先解析知识上下文，再生成内容。
 
@@ -305,7 +377,7 @@ def register_routes(app, jinja_env, render_func):
 
         thread = threading.Thread(
             target=_run_generation_v2,
-            args=(job_id, bundle, platform_list, tone_variant, knowledge_id),
+            args=(job_id, bundle, platform_list, tone_variant, knowledge_id, generate_title, generate_tags),
             daemon=True,
         )
         thread.start()
@@ -332,8 +404,10 @@ def register_routes(app, jinja_env, render_func):
         request: Request,
         knowledge_ids: str = Form(""),
         topic: str = Form(""),
-        tone_variant: str = Form("standard"),
+        tone_variant: str = Form("passionate"),
         max_related: int = Form(5),
+        generate_title: bool = Form(False),
+        generate_tags: bool = Form(False),
     ):
         """多条目合并生成 — 用户手动选择了多条知识条目一起创作。"""
         # 解析 ID 列表
@@ -371,7 +445,7 @@ def register_routes(app, jinja_env, render_func):
 
         thread = threading.Thread(
             target=_run_generation_v2,
-            args=(job_id, bundle, platform_list, tone_variant, id_list[0]),
+            args=(job_id, bundle, platform_list, tone_variant, id_list[0], generate_title, generate_tags),
             daemon=True,
         )
         thread.start()
@@ -431,14 +505,25 @@ def register_routes(app, jinja_env, render_func):
 
     @app.post("/api/agent/url-submit")
     async def api_agent_url_submit(url: str = Form(...)):
-        """接收 URL，提交给 OmniVault 处理，返回进度轮询片段。"""
+        """接收 URL，提交给 OmniVault 处理，返回进度轮询片段。
+
+        支持直接粘贴抖音/小红书等平台的分享口令文本，自动提取其中的链接。
+        """
         import re
         url = url.strip()
         if not url:
             return HTMLResponse(render_func("agent_url_status.html", error="请输入链接"))
 
-        if not re.match(r'^https?://', url):
-            url = "https://" + url
+        # 从分享口令中提取 URL（如 "0.28 复制打开抖音... https://v.douyin.com/xxx/ ..."）
+        url_match = re.search(r'https?://\S+', url)
+        if url_match:
+            url = url_match.group(0).rstrip('.,;:!?）)')
+            logger.info("从分享口令中提取链接: %s", url)
+        elif not re.match(r'^https?://', url):
+            return HTMLResponse(render_func(
+                "agent_url_status.html",
+                error="未识别到有效链接。请粘贴包含 https:// 的完整链接或平台分享口令。",
+            ))
 
         result = await connector.submit_url(url)
         if not result:
@@ -620,6 +705,131 @@ def register_routes(app, jinja_env, render_func):
             return HTMLResponse('<div class="text-sm text-gray-400 py-6 text-center">📊 点击下方按钮进行 AI 打分</div>')
         return HTMLResponse(render_func("agent_score_row.html", scores=sc, draft_id=draft_id))
 
+    # ── 分项打分：标题 / 标签 ──
+
+    @app.post("/api/agent/draft/{draft_id}/score-title")
+    async def api_score_title(draft_id: int):
+        draft = draft_store.get_by_id(draft_id)
+        if not draft: raise HTTPException(404, "草稿未找到")
+        raw = draft["content_text"]
+        first_line = raw.strip().split("\n")[0] if raw else ""
+        result = await score_title(first_line, draft["platform"])
+        return JSONResponse(result)
+
+    @app.post("/api/agent/draft/{draft_id}/score-tags")
+    async def api_score_tags(draft_id: int):
+        draft = draft_store.get_by_id(draft_id)
+        if not draft: raise HTTPException(404, "草稿未找到")
+        raw = draft["content_text"]
+        # 提取标签行
+        tag_lines = [l.strip() for l in raw.split("\n") if l.strip().startswith("#")]
+        tags_text = " ".join(tag_lines) if tag_lines else ""
+        result = await score_tags(tags_text, draft["platform"])
+        return JSONResponse(result)
+
+    # ── 单独编辑标题 / 标签 ──
+
+    @app.post("/api/agent/draft/{draft_id}/edit-title")
+    async def api_edit_draft_title(draft_id: int, title: str = Form(...)):
+        draft = draft_store.get_by_id(draft_id)
+        if not draft: raise HTTPException(404, "草稿未找到")
+        raw = draft["content_text"]
+        lines = raw.split("\n")
+        replaced = False
+        for i, line in enumerate(lines):
+            if line.strip() and not line.strip().startswith("#"):
+                lines[i] = title
+                replaced = True
+                break
+        if not replaced:
+            lines.insert(0, title)
+        new_content = "\n".join(lines)
+        ok = draft_store.update_status(draft_id, draft["status"], new_content)
+        return {"ok": ok}
+
+    @app.post("/api/agent/draft/{draft_id}/edit-tags")
+    async def api_edit_draft_tags(draft_id: int, tags: str = Form(...)):
+        draft = draft_store.get_by_id(draft_id)
+        if not draft: raise HTTPException(404, "草稿未找到")
+        raw = draft["content_text"]
+        lines = raw.split("\n")
+        # 去掉所有以 # 开头的标签行
+        body_lines = [l for l in lines if not (l.strip().startswith("#") and len(l.strip()) < 80)]
+        # 追加新标签（每个空格分隔的词如果没 # 就加 #）
+        new_tags = []
+        for t in tags.split():
+            t = t.strip()
+            if t:
+                new_tags.append(t if t.startswith("#") else "#" + t)
+        body_lines.append(" ".join(new_tags))
+        new_content = "\n".join(body_lines)
+        ok = draft_store.update_status(draft_id, draft["status"], new_content)
+        return {"ok": ok}
+
+    # ── 删除草稿 ──
+
+    @app.delete("/api/agent/draft/{draft_id}")
+    async def api_delete_draft(draft_id: int):
+        ok = draft_store.delete_by_id(draft_id)
+        if not ok: raise HTTPException(404, "草稿未找到")
+        return {"ok": True}
+
+    @app.delete("/api/agent/drafts/group/{knowledge_id}")
+    async def api_delete_draft_group(knowledge_id: int):
+        """删除某个知识条目下的所有草稿（移入回收站）。"""
+        drafts = draft_store.list_by_knowledge(knowledge_id)
+        deleted = 0
+        for d in drafts:
+            if draft_store.delete_by_id(d["id"]):
+                deleted += 1
+        logger.info("删除草稿组 knowledge_id=%d: %d 条", knowledge_id, deleted)
+        return {"ok": True, "deleted": deleted}
+
+    # ── 回收站 ──
+
+    @app.get("/agent/trash", response_class=HTMLResponse)
+    async def trash_page(request: Request):
+        """回收站页面。"""
+        # 自动清理过期条目
+        auto_days = settings.AUTO_TRASH_DAYS
+        if auto_days > 0:
+            cleaned = draft_store.clean_expired_trash(auto_days)
+            if cleaned:
+                logger.info("自动清理回收站: %d 条（超过 %d 天）", cleaned, auto_days)
+
+        trash_items = draft_store.list_trash(limit=100)
+        return HTMLResponse(render_func(
+            "trash.html",
+            request=request,
+            items=trash_items,
+            auto_days=auto_days,
+            platforms_meta=PLATFORM_META,
+        ))
+
+    @app.post("/api/agent/draft/{draft_id}/restore")
+    async def api_restore_draft(draft_id: int):
+        ok = draft_store.restore_from_trash(draft_id)
+        if not ok: raise HTTPException(404, "草稿未找到或不在回收站")
+        return {"ok": True}
+
+    @app.delete("/api/agent/draft/{draft_id}/permanent")
+    async def api_permanent_delete(draft_id: int):
+        ok = draft_store.permanent_delete(draft_id)
+        if not ok: raise HTTPException(404, "草稿未找到")
+        return {"ok": True}
+
+    @app.post("/api/agent/trash/empty")
+    async def api_empty_trash():
+        count = draft_store.empty_trash()
+        return {"ok": True, "deleted": count}
+
+    @app.post("/api/agent/trash/auto-days")
+    async def api_set_auto_trash_days(days: int = Form(7)):
+        """设置回收站自动清理天数。"""
+        settings.AUTO_TRASH_DAYS = days
+        cleaned = draft_store.clean_expired_trash(days)
+        return {"ok": True, "days": days, "cleaned_now": cleaned}
+
     # ═══════════════════════════════════════════
     # OmniVault 连接状态
     # ═══════════════════════════════════════════
@@ -650,14 +860,14 @@ def _run_generation(job_id, entry, platforms, tone_variant, knowledge_id):
         loop.close()
 
 
-def _run_generation_v2(job_id, bundle, platforms, tone_variant, knowledge_id):
+def _run_generation_v2(job_id, bundle, platforms, tone_variant, knowledge_id, generate_title=True, generate_tags=True):
     """v2 生成后台任务 — 使用 ContextBundle。"""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
         from .generator import generate_for_platforms_v2
         result = loop.run_until_complete(
-            generate_for_platforms_v2(bundle, platforms, tone_variant, knowledge_id)
+            generate_for_platforms_v2(bundle, platforms, tone_variant, knowledge_id, generate_title=generate_title, generate_tags=generate_tags)
         )
         _JOBS[job_id] = {"status": "done", "result": result}
     except Exception as e:

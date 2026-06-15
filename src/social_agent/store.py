@@ -60,10 +60,16 @@ class DraftStore:
                     updated_at TEXT NOT NULL,
                     published_at TEXT,
                     publish_url TEXT NOT NULL DEFAULT '',
+                    deleted_at TEXT,
                     metadata_json TEXT NOT NULL DEFAULT '{}',
                     UNIQUE(knowledge_id, platform, version)
                 )
             """)
+            # 迁移：为旧数据库添加 deleted_at 列
+            try:
+                conn.execute("ALTER TABLE content_drafts ADD COLUMN deleted_at TEXT")
+            except Exception:
+                pass  # 列已存在
             conn.execute("CREATE INDEX IF NOT EXISTS idx_drafts_knowledge ON content_drafts(knowledge_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_drafts_status ON content_drafts(status)")
             conn.execute("""
@@ -139,7 +145,7 @@ class DraftStore:
     def list_recent(self, limit: int = 20, status: Optional[str] = None, platform: Optional[str] = None) -> list[dict]:
         conn = self._get_conn()
         try:
-            conditions = []
+            conditions = ["d.status != 'trash'"]  # 默认排除回收站
             params = []
             if status:
                 conditions.append("d.status=?")
@@ -147,7 +153,7 @@ class DraftStore:
             if platform:
                 conditions.append("d.platform=?")
                 params.append(platform)
-            where = " AND ".join(conditions) if conditions else "1=1"
+            where = " AND ".join(conditions)
             rows = conn.execute(
                 f"""SELECT d.*
                     FROM content_drafts d
@@ -335,11 +341,79 @@ class DraftStore:
             conn.close()
 
     def delete_by_id(self, draft_id: int) -> bool:
+        """软删除：移入回收站。"""
         conn = self._get_conn()
         try:
-            cur = conn.execute("DELETE FROM content_drafts WHERE id=?", (draft_id,))
+            now = datetime.now(timezone.utc).isoformat()
+            cur = conn.execute(
+                "UPDATE content_drafts SET status='trash', deleted_at=? WHERE id=?",
+                (now, draft_id),
+            )
             conn.commit()
             return cur.rowcount > 0
+        finally:
+            conn.close()
+
+    def restore_from_trash(self, draft_id: int) -> bool:
+        conn = self._get_conn()
+        try:
+            cur = conn.execute(
+                "UPDATE content_drafts SET status='draft', deleted_at=NULL WHERE id=? AND status='trash'",
+                (draft_id,),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+
+    def permanent_delete(self, draft_id: int) -> bool:
+        conn = self._get_conn()
+        try:
+            cur = conn.execute("DELETE FROM content_drafts WHERE id=? AND status='trash'", (draft_id,))
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+
+    def clean_expired_trash(self, days: int) -> int:
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT id, deleted_at FROM content_drafts WHERE status='trash'"
+            ).fetchall()
+            deleted = 0
+            now = datetime.now(timezone.utc)
+            for row in rows:
+                if row["deleted_at"]:
+                    try:
+                        dt = datetime.fromisoformat(row["deleted_at"])
+                        if (now - dt).days >= days:
+                            conn.execute("DELETE FROM content_drafts WHERE id=?", (row["id"],))
+                            deleted += 1
+                    except Exception:
+                        pass
+            conn.commit()
+            return deleted
+        finally:
+            conn.close()
+
+    def empty_trash(self) -> int:
+        conn = self._get_conn()
+        try:
+            cur = conn.execute("DELETE FROM content_drafts WHERE status='trash'")
+            conn.commit()
+            return cur.rowcount
+        finally:
+            conn.close()
+
+    def list_trash(self, limit: int = 50) -> list[dict]:
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM content_drafts WHERE status='trash' ORDER BY deleted_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]
         finally:
             conn.close()
 

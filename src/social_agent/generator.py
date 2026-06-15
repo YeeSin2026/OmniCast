@@ -23,9 +23,11 @@ logger = logging.getLogger(__name__)
 async def generate_for_platforms(
     knowledge_entry: dict,
     platforms: list[str],
-    tone_variant: str = "standard",
+    tone_variant: str = "passionate",
     knowledge_id: int = 0,
     progress_callback: Optional[Callable] = None,
+    generate_title: bool = True,
+    generate_tags: bool = True,
 ) -> dict:
     """为多个平台并行生成社媒内容。"""
     store = DraftStore()
@@ -33,7 +35,9 @@ async def generate_for_platforms(
     async def _gen_one(platform: str) -> dict:
         try:
             messages = build_generation_messages(
-                knowledge_entry, platform, tone_variant
+                knowledge_entry, platform, tone_variant,
+                generate_title=generate_title,
+                generate_tags=generate_tags,
             )
             content = await chat(
                 messages,
@@ -92,33 +96,21 @@ async def generate_for_platforms(
 async def generate_for_platforms_v2(
     bundle,  # ContextBundle
     platforms: list[str],
-    tone_variant: str = "standard",
+    tone_variant: str = "passionate",
     knowledge_id: int = 0,
     progress_callback: Optional[Callable] = None,
+    generate_title: bool = True,
+    generate_tags: bool = True,
 ) -> dict:
-    """v2 为多个平台并行生成内容 — 使用 ContextBundle。
-
-    与 v1 的区别：
-    - 接受 ContextBundle 而非单个 knowledge_entry
-    - 自动根据 bundle.mode 选择知识驱动或风格驱动 prompt
-    - 草稿 metadata 中记录模式和覆盖度信息
-
-    Args:
-        bundle: 来自 KnowledgeResolver.resolve() 的上下文包
-        platforms: 目标平台列表
-        tone_variant: 基调变体
-        knowledge_id: 关联的知识条目 ID
-        progress_callback: 进度回调
-
-    Returns:
-        {"drafts": {platform: draft_id}, "errors": [...], "mode": "...", "coverage": "..."}
-    """
+    """v2 为多个平台并行生成内容 — 使用 ContextBundle。"""
     store = DraftStore()
 
     async def _gen_one(platform: str) -> dict:
         try:
             messages = build_generation_messages_v2(
-                bundle, platform, tone_variant
+                bundle, platform, tone_variant,
+                generate_title=generate_title,
+                generate_tags=generate_tags,
             )
             content = await chat(
                 messages,
