@@ -1,0 +1,101 @@
+{# ranking_reasons.html — AI 精排选中的关联条目, 带评分/预览/勾选 #}
+
+<div class="border border-emerald-200 dark:border-emerald-900/30 bg-emerald-50/50 dark:bg-emerald-900/10 rounded-xl p-4"
+     id="ranking-panel">
+    <div class="flex items-center justify-between mb-3">
+        <h3 class="text-[13px] font-semibold text-emerald-700 dark:text-emerald-400">
+            🧠 AI 为你选了 {{ reasons|length }} 条关联知识
+        </h3>
+        <div class="flex gap-2">
+            <button onclick="toggleAllRanked(true)" class="text-[10px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">全选</button>
+            <button onclick="toggleAllRanked(false)" class="text-[10px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">取消</button>
+        </div>
+    </div>
+
+    <div class="space-y-2" id="ranked-list">
+        {% for r in reasons %}
+        <div class="border border-zinc-200 dark:border-zinc-700 rounded-lg bg-white dark:bg-zinc-900 overflow-hidden ranked-item"
+             data-entry-id="{{ r.id }}">
+            <!-- 折叠头部：勾选 + 排名 + 标题 + 评分 -->
+            <div class="flex items-center gap-2 p-2.5 cursor-pointer" onclick="this.parentElement.classList.toggle('expanded')">
+                <!-- 勾选框 -->
+                <input type="checkbox" checked
+                       class="ranked-checkbox w-4 h-4 rounded accent-emerald-600 cursor-pointer"
+                       data-entry-id="{{ r.id }}"
+                       onclick="event.stopPropagation()"
+                       onchange="updateRankedCount()">
+
+                <!-- 排名 -->
+                <span class="text-[10px] font-mono text-zinc-400 w-5 text-right shrink-0">#{{ r.rank }}</span>
+
+                <!-- 标题 -->
+                <span class="text-[12px] text-zinc-700 dark:text-zinc-200 truncate flex-1">
+                    {{ r.title }}
+                </span>
+
+                <!-- 相关性评分 -->
+                <span class="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-full shrink-0
+                    {% if r.score >= 85 %}bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400
+                    {% elif r.score >= 70 %}bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400
+                    {% else %}bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400{% endif %}">
+                    {{ r.score }}%
+                </span>
+
+                <!-- 展开箭头 -->
+                <span class="text-[10px] text-zinc-400 expand-icon shrink-0">▶</span>
+            </div>
+
+            <!-- 展开内容：理由 + 预览 -->
+            <div class="hidden px-3 pb-3 pt-0 expanded-content">
+                <!-- 理由 -->
+                {% if r.reason %}
+                <p class="text-[11px] text-zinc-500 dark:text-zinc-400 mb-2">
+                    💡 {{ r.reason }}
+                </p>
+                {% endif %}
+                <!-- 预览区：HTMX 懒加载条目内容 -->
+                <div class="text-[11px] text-zinc-400 dark:text-zinc-500 border-t border-zinc-100 dark:border-zinc-800 pt-2"
+                     hx-get="/api/agent/entry-preview/{{ r.id }}"
+                     hx-trigger="intersect once"
+                     hx-swap="innerHTML">
+                    <span class="animate-pulse">加载预览…</span>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <p class="text-[10px] text-zinc-400 dark:text-zinc-500 mt-3">
+        勾选的条目将作为创作素材。取消勾选 = 不使用这条。你可以点每条展开查看内容后再决定。
+    </p>
+</div>
+
+<style>
+.ranked-item.expanded .expanded-content { display: block !important; }
+.ranked-item.expanded .expand-icon { transform: rotate(90deg); display: inline-block; }
+</style>
+
+<script>
+function toggleAllRanked(checked) {
+    document.querySelectorAll('.ranked-checkbox').forEach(c => c.checked = checked);
+    updateRankedCount();
+}
+function updateRankedCount() {
+    const checked = document.querySelectorAll('.ranked-checkbox:checked').length;
+    // 更新表单隐藏字段
+    let input = document.getElementById('selected-ids-input');
+    if (!input) {
+        input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'selected_ids';
+        input.id = 'selected-ids-input';
+        const form = document.getElementById('generate-form');
+        if (form) form.appendChild(input);
+    }
+    const ids = [];
+    document.querySelectorAll('.ranked-checkbox:checked').forEach(c => ids.push(c.dataset.entryId));
+    input.value = ids.join(',');
+}
+// 初始化
+document.addEventListener('DOMContentLoaded', updateRankedCount);
+</script>

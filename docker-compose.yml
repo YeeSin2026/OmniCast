@@ -1,0 +1,22 @@
+services:
+  omnicast:
+    build: .
+    image: omnicast:1.0.0
+    container_name: omnicast
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    volumes:
+      - omnicast-data:/data
+    environment:
+      - TZ=Etc/UTC
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://api.deepseek.com}
+      - LLM_MODEL=${LLM_MODEL:-deepseek-chat}
+      - OMNIVAULT_API_URL=${OMNIVAULT_API_URL:-http://host.docker.internal:8080}
+      - OMNICAST_DB_PATH=/data/drafts.db
+      - COSYVOICE_API_URL=${COSYVOICE_API_URL:-http://host.docker.internal:50000}
+      - AUDIO_OUTPUT_DIR=/data/audio
+
+volumes:
+  omnicast-data:

@@ -1,0 +1,55 @@
+{# speaker_status.html — 声音配置状态 HTMX 片段 #}
+
+{% if just_saved %}
+<div id="speaker-toast" class="mb-4 px-4 py-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl flex items-center gap-3 animate-pulse">
+    <span class="text-lg">✅</span>
+    <div>
+        <p class="text-[13px] font-semibold text-emerald-700 dark:text-emerald-400">声音样本录入成功！</p>
+        <p class="text-[11px] text-emerald-600 dark:text-emerald-500">AI 已记住你的声音，现在可以生成口播音频了</p>
+    </div>
+</div>
+<script>
+    // 3 秒后自动淡出
+    setTimeout(function() {
+        var toast = document.getElementById('speaker-toast');
+        if (toast) {
+            toast.style.transition = 'opacity 0.5s ease-out';
+            toast.style.opacity = '0';
+            setTimeout(function() { if (toast.parentNode) toast.remove(); }, 500);
+        }
+    }, 4000);
+</script>
+{% endif %}
+
+{% if speaker.configured %}
+<div class="space-y-3">
+    <div class="flex items-center gap-2">
+        <span class="w-3 h-3 rounded-full bg-emerald-500"></span>
+        <span class="text-[13px] font-medium text-emerald-700 dark:text-emerald-400">声音样本已配置</span>
+    </div>
+    <div class="text-[12px] text-zinc-500 dark:text-zinc-400 space-y-1">
+        {% if speaker.duration_sec %}
+        <div>⏱ 时长：约 {{ "%.1f"|format(speaker.duration_sec) }} 秒</div>
+        {% endif %}
+        {% if speaker.prompt_text %}
+        <div>📝 参考文本：{{ speaker.prompt_text[:40] }}{% if speaker.prompt_text|length > 40 %}…{% endif %}</div>
+        {% endif %}
+        {% if speaker.created_at %}
+        <div>📅 上传于：<time datetime="{{ speaker.created_at }}">{{ speaker.created_at[:16] }}</time></div>
+        {% endif %}
+    </div>
+    <div class="text-[11px] text-zinc-400 dark:text-zinc-500 mt-3">
+        上传新的样本将覆盖当前配置。
+    </div>
+</div>
+{% else %}
+<div class="space-y-3">
+    <div class="flex items-center gap-2">
+        <span class="w-3 h-3 rounded-full bg-zinc-300 dark:bg-zinc-600"></span>
+        <span class="text-[13px] font-medium text-zinc-500 dark:text-zinc-400">尚未配置声音样本</span>
+    </div>
+    <p class="text-[12px] text-zinc-400 dark:text-zinc-500">
+        上传一段你的录音后，AI 即可克隆你的声音来生成口播音频。
+    </p>
+</div>
+{% endif %}

@@ -1,0 +1,305 @@
+#!/usr/bin/env python3
+"""visual-agent — macOS 视觉自动化 CLI。
+
+基于截图+视觉模型+后台点击的 GUI Agent。
+不操控 DOM，不注入 JS，不会被平台检测。
+其它 Agent (Claude Code, Cursor, Codex) 可以通过 CLI 调用。
+
+用法:
+  visual-agent screenshot [--window Chrome] [--output /tmp/screen.png]
+  visual-agent detect    [--window Chrome]
+  visual-agent click     [--window Chrome] --target "发布按钮"
+  visual-agent type      [--window Chrome] --text "内容"
+  visual-agent publish   [--window Chrome] --content-file /tmp/post.json
+  visual-agent scan      [--window Chrome]          # SoM 元素扫描
+  visual-agent list-windows                           # 列出所有窗口
+  visual-agent serve     [--port 8100]               # 启动 HTTP API 服务
+
+依赖（全部本地）:
+  - macOS 14+, Accessibility + Screen Recording 权限
+  - UI-TARS 或其他视觉模型 (OMLX 127.0.0.1:8000)
+  - bin/bgclick + bin/bgtype (Swift 编译，55KB，随模块提供)
+"""
+
+import asyncio
+import json
+import os
+import sys
+from pathlib import Path
+
+# 确保能 import visual 模块
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / "src"))
+
+import argparse
+
+VISUAL_API = "http://127.0.0.1:8000/v1/chat/completions"
+VISUAL_MODEL = os.environ.get("VISUAL_MODEL", "UI-TARS-1.5-7B-6bit")
+VISUAL_KEY = os.environ.get("VISUAL_KEY", "tk2026")
+
+
+async def cmd_screenshot(args):
+    """截取指定窗口。"""
+    from visual import screen
+    if args.window:
+        img = screen.capture_window_by_title(args.window)
+    else:
+        img = screen.capture_screen()
+
+    if not img:
+        print("❌ 截图失败", file=sys.stderr)
+        sys.exit(1)
+
+    out = args.output or "/tmp/visual-screenshot.png"
+    Path(out).write_bytes(img)
+    print(f"✅ 截图已保存: {out} ({len(img)//1024}KB)")
+
+
+async def cmd_detect(args):
+    """检测页面状态。"""
+    from visual import VisualAgent
+    agent = VisualAgent()
+    state = await agent.detect_page_state(args.window or "Chrome")
+    print(json.dumps(state, ensure_ascii=False, indent=2))
+
+
+async def cmd_click(args):
+    """找到并点击目标元素（SoM 增强）。"""
+    if not args.target:
+        print("❌ 需要 --target 参数", file=sys.stderr)
+        sys.exit(1)
+
+    from visual import VisualAgent
+    agent = VisualAgent()
+    win = args.window or "Chrome"
+
+    # 获取 PID
+    from visual import screen
+    info = screen.get_window_info(win)
+    agent._target_pid = info.get("pid") if info else None
+
+    success = await agent._click_target_som(args.target, win)
+    if success:
+        print(f"✅ 已点击: {args.target}")
+    else:
+        print(f"❌ 点击失败: {args.target}")
+        sys.exit(1)
+
+
+async def cmd_type(args):
+    """在指定窗口输入文本。"""
+    if not args.text:
+        print("❌ 需要 --text 参数", file=sys.stderr)
+        sys.exit(1)
+
+    from visual import screen, action
+    info = screen.get_window_info(args.window or "Chrome")
+    pid = info.get("pid") if info else None
+
+    if pid:
+        action.set_clipboard(args.text)
+        ok = action.background_paste(pid)
+    else:
+        action.set_clipboard(args.text)
+        ok = action.human_paste()
+
+    if ok:
+        print(f"✅ 已输入 {len(args.text)} 字")
+    else:
+        print("❌ 输入失败")
+        sys.exit(1)
+
+
+async def cmd_publish(args):
+    """智能发布——自动处理登录、导航、填写、发布。"""
+    if not args.content_file:
+        print("❌ 需要 --content-file 参数（JSON 格式）", file=sys.stderr)
+        sys.exit(1)
+
+    content = json.loads(Path(args.content_file).read_text())
+    platform = args.platform or "unknown"
+
+    from visual import VisualAgent
+    agent = VisualAgent()
+
+    agent.on_user_action_needed(lambda event, data: print(
+        f"\n{'='*50}\n  ⚠️  [{event}] {data.get('message', '')}\n{'='*50}\n"
+    ))
+
+    result = await agent.publish_smart(
+        browser_window_title=args.window or "Chrome",
+        content=content,
+        platform_name=platform,
+    )
+
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    sys.exit(0 if result.get("success") else 1)
+
+
+async def cmd_scan(args):
+    """SoM 元素扫描 + 编号标注。"""
+    from visual import screen, som as som_module
+    import base64
+
+    win = args.window or "Chrome"
+    img = screen.capture_window_by_title(win)
+    if not img:
+        print("❌ 截图失败", file=sys.stderr)
+        sys.exit(1)
+
+    # 先试 AX
+    elements = som_module.scan_elements(app_name=win, max_elements=40)
+
+    if len(elements) < 2:
+        # 降级 VLM 检测
+        elements = await som_module.detect_elements_vlm(img)
+
+    if elements:
+        # 叠加标注
+        marked = som_module.overlay_markers(img, elements)
+        out = args.output or f"/tmp/visual-som-{win}.png"
+        Path(out).write_bytes(marked)
+        print(f"✅ {len(elements)} 个元素 → {out}")
+        for el in elements:
+            print(f"  [{el.index}] {el.short_desc} @({el.center[0]},{el.center[1]})")
+    else:
+        print("❌ 未检测到元素")
+        sys.exit(1)
+
+
+async def cmd_list_windows(args):
+    """列出所有可见窗口。"""
+    from visual import screen
+    titles = screen.list_window_titles()
+    print(f"共 {len(titles)} 个窗口:\n")
+    for t in titles:
+        print(f"  {t[:80]}")
+
+
+async def cmd_serve(args):
+    """启动 HTTP API 服务（供远程 Agent 调用）。"""
+    port = args.port or 8100
+    print(f"启动 Visual API 服务: http://127.0.0.1:{port}")
+    print(f"视觉模型: {VISUAL_MODEL}")
+
+    # 简单的 HTTP JSON API
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    from visual import screen, VisualAgent
+
+    agent = VisualAgent()
+
+    class VisualHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path.startswith("/health"):
+                self._json({"status": "ok", "model": VISUAL_MODEL})
+            elif self.path.startswith("/windows"):
+                self._json({"windows": screen.list_window_titles()})
+            else:
+                self._json({"error": "not found"}, 404)
+
+        def do_POST(self):
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length)) if length else {}
+
+            if self.path.startswith("/detect"):
+                loop = asyncio.new_event_loop()
+                state = loop.run_until_complete(
+                    agent.detect_page_state(body.get("window", "Chrome"))
+                )
+                loop.close()
+                self._json(state)
+
+            elif self.path.startswith("/click"):
+                loop = asyncio.new_event_loop()
+                win = body.get("window", "Chrome")
+                info = screen.get_window_info(win)
+                agent._target_pid = info.get("pid") if info else None
+                ok = loop.run_until_complete(
+                    agent._click_target_som(body.get("target", ""), win)
+                )
+                loop.close()
+                self._json({"success": ok})
+
+            elif self.path.startswith("/publish"):
+                loop = asyncio.new_event_loop()
+                result = loop.run_until_complete(
+                    agent.publish_smart(
+                        body.get("window", "Chrome"),
+                        body.get("content", {}),
+                        body.get("platform", "unknown"),
+                    )
+                )
+                loop.close()
+                self._json(result)
+
+            else:
+                self._json({"error": "not found"}, 404)
+
+        def _json(self, data, code=200):
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(json.dumps(data, ensure_ascii=False).encode())
+
+        def log_message(self, format, *args):
+            pass  # 静默
+
+    server = HTTPServer(("127.0.0.1", port), VisualHandler)
+    print(f"✅ 服务运行中，按 Ctrl+C 停止")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("停止服务")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="macOS 视觉自动化 Agent")
+    parser.add_argument("--window", "-w", help="目标窗口标题包含的字符串（如 Chrome）")
+
+    sub = parser.add_subparsers(dest="command")
+
+    sub.add_parser("screenshot", help="截取窗口").add_argument("--output", "-o", help="输出路径")
+    sub.add_parser("detect", help="检测页面状态")
+    sub.add_parser("scan", help="SoM 元素扫描").add_argument("--output", "-o", help="输出路径")
+    sub.add_parser("list-windows", help="列出所有窗口")
+
+    p = sub.add_parser("click", help="点击目标"); p.add_argument("--target", "-t", required=True)
+    p = sub.add_parser("type", help="输入文本"); p.add_argument("--text", required=True)
+
+    p = sub.add_parser("publish", help="智能发布")
+    p.add_argument("--content-file", "-f", required=True)
+    p.add_argument("--platform", "-p", default="unknown")
+
+    p = sub.add_parser("serve", help="启动 HTTP API")
+    p.add_argument("--port", type=int, default=8100)
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    commands = {
+        "screenshot": cmd_screenshot,
+        "detect": cmd_detect,
+        "click": cmd_click,
+        "type": cmd_type,
+        "publish": cmd_publish,
+        "scan": cmd_scan,
+        "list-windows": cmd_list_windows,
+        "serve": cmd_serve,
+    }
+
+    try:
+        loop.run_until_complete(commands[args.command](args))
+    except KeyboardInterrupt:
+        print("\n中断")
+    finally:
+        loop.close()
+
+
+if __name__ == "__main__":
+    main()

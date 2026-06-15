@@ -1,0 +1,21 @@
+<!-- HTMX 片段：生成状态/结果，无需 extend base -->
+{% if job_id %}
+<div class="text-sm text-gray-500 dark:text-gray-400 animate-pulse" hx-get="/api/agent/generate/status/{{ job_id }}" hx-trigger="every 2s" hx-swap="outerHTML">
+    ⏳ 正在生成中，请稍候...
+</div>
+{% elif error %}
+<div class="text-red-500 text-sm">❌ {{ error }}</div>
+{% elif drafts %}
+<div class="text-green-600 dark:text-green-400 text-sm mb-3">
+    ✅ 生成完成！共 {{ drafts|length }} 个平台
+</div>
+<div class="flex flex-wrap gap-2 mb-3">
+    {% for platform, draft_id in drafts.items() %}
+    <a href="/agent/draft/{{ draft_id }}"
+       class="inline-flex items-center gap-1 px-3 py-1.5 bg-indigo-50 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-200 rounded-lg text-sm hover:bg-indigo-100 dark:hover:bg-indigo-800 transition-colors">
+        {{ draft_id }}
+    </a>
+    {% endfor %}
+</div>
+<a href="/agent/drafts" class="text-indigo-600 text-sm hover:underline">查看所有草稿 →</a>
+{% endif %}

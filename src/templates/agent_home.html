@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% block title %}OmniCast — 内容工厂{% endblock %}
+{% block content %}
+
+<div class="max-w-7xl mx-auto">
+    <!-- 直接输入链接 -->
+    <div class="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-2d p-5 mb-5">
+        <div class="flex items-center gap-3 mb-3">
+            <h2 class="text-[14px] font-semibold text-zinc-900 dark:text-zinc-200">直接输入链接</h2>
+            <span class="text-[9px] px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 font-medium">无需知识库</span>
+        </div>
+        <form hx-post="/api/agent/url-submit" hx-target="#url-status" hx-indicator="#url-submit-btn">
+            <div class="flex gap-2">
+                <div class="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-transparent focus-within:border-zinc-300 dark:focus-within:border-zinc-600 focus-within:bg-white dark:focus-within:bg-zinc-900 transition-colors">
+                    <input type="url" name="url" placeholder="https://..."
+                           class="flex-1 bg-transparent text-[13px] text-zinc-700 dark:text-zinc-300 placeholder-zinc-400 dark:placeholder-zinc-500 outline-none">
+                </div>
+                <button type="submit" id="url-submit-btn"
+                        class="px-5 py-2 bg-zinc-900 dark:bg-white dark:text-zinc-900 text-white text-[13px] font-medium rounded-lg hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors disabled:opacity-50">
+                    开始处理
+                </button>
+            </div>
+        </form>
+        <div id="url-status" class="mt-3"></div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <!-- 左：知识条目列表 -->
+        <div class="lg:col-span-2">
+            <div class="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-2d p-5">
+                <div class="flex items-center justify-between mb-3">
+                    <h2 class="text-[14px] font-semibold text-zinc-900 dark:text-zinc-200">知识条目</h2>
+                    <span id="selected-count" class="text-[11px] text-zinc-400 hidden">已选 0 条</span>
+                </div>
+                <form hx-get="/agent" hx-target="#entry-list" hx-trigger="keyup changed delay:300ms" class="mb-3">
+                    <div class="flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-transparent focus-within:border-zinc-300 dark:focus-within:border-zinc-600 focus-within:bg-white dark:focus-within:bg-zinc-900 transition-colors">
+                        <input type="text" name="search" value="{{ search }}" placeholder="搜索标题、标签..."
+                               class="flex-1 bg-transparent text-[13px] text-zinc-700 dark:text-zinc-300 placeholder-zinc-400 dark:placeholder-zinc-500 outline-none">
+                    </div>
+                </form>
+                <div id="entry-list" class="space-y-2 max-h-[500px] overflow-y-auto">
+                    {% if entries %}
+                        {% for e in entries %}
+                        <div class="entry-row border border-zinc-100 dark:border-zinc-800 rounded-lg p-3 hover:border-zinc-200 dark:hover:border-zinc-700 hover:shadow-2d-hover transition-all">
+                            <div class="flex items-start gap-3">
+                                <!-- 复选框 -->
+                                <input type="checkbox" value="{{ e.id }}"
+                                       class="entry-checkbox mt-0.5 w-4 h-4 rounded accent-zinc-900 dark:accent-zinc-200 cursor-pointer"
+                                       onchange="updateSelection()">
+                                <div class="flex-1 min-w-0">
+                                    <h3 class="text-[13px] font-medium text-zinc-900 dark:text-zinc-200 truncate">{{ e.title[:60] }}</h3>
+                                    <div class="flex flex-wrap gap-1.5 mt-1.5">
+                                        {% if e.platform %}
+                                        <span class="text-[9px] px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400">{{ e.platform }}</span>
+                                        {% endif %}
+                                        {% if e.author %}
+                                        <span class="text-[9px] text-zinc-400 dark:text-zinc-500">@{{ e.author }}</span>
+                                        {% endif %}
+                                        {% if e.tags %}
+                                            {% for t in e.tags.split(',')[:3] %}
+                                            <span class="text-[9px] px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400">{{ t.strip() }}</span>
+                                            {% endfor %}
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                <a href="/agent/generate/{{ e.id }}"
+                                   class="shrink-0 px-3 py-1.5 text-[12px] font-medium text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg transition-colors">
+                                    生成 →
+                                </a>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="flex flex-col items-center justify-center py-16 text-zinc-400 dark:text-zinc-500">
+                            <p class="text-[13px]">暂无知识条目</p>
+                            <p class="text-[11px] mt-1">提交链接后自动采集内容</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- 右：最近草稿 -->
+        <div>
+            <div class="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-2d p-5">
+                <div class="flex items-center justify-between mb-3">
+                    <h2 class="text-[14px] font-semibold text-zinc-900 dark:text-zinc-200">最近草稿</h2>
+                    <a href="/agent/drafts" class="text-[11px] text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300">查看全部 →</a>
+                </div>
+                {% if drafts %}
+                <div class="space-y-1.5 max-h-[500px] overflow-y-auto">
+                    {% for d in drafts %}
+                    <a href="/agent/draft/{{ d.id }}"
+                       class="block border border-zinc-100 dark:border-zinc-800 rounded-lg p-3 hover:border-zinc-200 dark:hover:border-zinc-700 hover:shadow-2d-hover transition-all">
+                        <div class="flex items-center gap-2 mb-1">
+                            <span class="text-[12px]">
+                                {% set meta = platforms_meta.get(d.platform, {}) %}
+                                {{ meta.get('icon', '') }}
+                            </span>
+                            <span class="text-[13px] font-medium text-zinc-800 dark:text-zinc-200 truncate">{{ d.title or '?' }}</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[9px] px-2 py-0.5 rounded-full font-medium
+                                {% if d.status == 'approved' %}bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400
+                                {% elif d.status == 'rejected' %}bg-red-50 dark:bg-red-900/30 text-red-500 dark:text-red-400
+                                {% else %}bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400{% endif %}">
+                                {% if d.status == 'approved' %}已通过
+                                {% elif d.status == 'rejected' %}已驳回
+                                {% else %}草稿{% endif %}
+                            </span>
+                            <span class="text-[9px] text-zinc-400 dark:text-zinc-500"><time datetime="{{ d.updated_at }}">{{ d.updated_at[:10] }}</time></span>
+                        </div>
+                    </a>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="flex flex-col items-center justify-center py-16 text-zinc-400 dark:text-zinc-500">
+                    <p class="text-[13px]">暂无草稿</p>
+                    <p class="text-[11px] mt-1">选择知识条目开始生成</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 浮动选择工具栏 -->
+<div id="selection-bar" class="fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-zinc-900/95 backdrop-blur-md border-t border-zinc-200 dark:border-zinc-800 px-6 py-3 z-20 hidden">
+    <div class="max-w-7xl mx-auto flex items-center justify-between">
+        <span class="text-[13px] text-zinc-700 dark:text-zinc-300" id="selection-label">已选 0 条</span>
+        <div class="flex items-center gap-3">
+            <button onclick="clearSelection()"
+                    class="text-[12px] text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300">
+                取消选择
+            </button>
+            <button onclick="combineSelected()"
+                    class="px-5 py-2 bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 text-[13px] font-medium rounded-lg hover:opacity-90 transition-opacity">
+                合并创作
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+function updateSelection() {
+    const checkboxes = document.querySelectorAll('.entry-checkbox:checked');
+    const count = checkboxes.length;
+    const bar = document.getElementById('selection-bar');
+    const label = document.getElementById('selection-label');
+    const countBadge = document.getElementById('selected-count');
+
+    if (count > 0) {
+        bar.classList.remove('hidden');
+        label.textContent = '已选 ' + count + ' 条';
+        countBadge.classList.remove('hidden');
+        countBadge.textContent = '已选 ' + count + ' 条';
+    } else {
+        bar.classList.add('hidden');
+        countBadge.classList.add('hidden');
+    }
+}
+
+function clearSelection() {
+    document.querySelectorAll('.entry-checkbox').forEach(c => c.checked = false);
+    updateSelection();
+}
+
+function combineSelected() {
+    const ids = [];
+    document.querySelectorAll('.entry-checkbox:checked').forEach(c => ids.push(c.value));
+    if (ids.length === 0) return;
+    window.location.href = '/agent/generate-multi?ids=' + ids.join(',');
+}
+</script>
+
+{% endblock %}

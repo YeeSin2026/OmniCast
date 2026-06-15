@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}草稿 #{{ draft.id }} — OmniCast{% endblock %}
+{% block content %}
+
+<div class="max-w-4xl mx-auto">
+    <div class="mb-5">
+        <a href="/agent/drafts" class="text-[13px] text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors">← 草稿列表</a>
+        <div class="flex items-center gap-3 mt-2">
+            <h1 class="text-[16px] font-bold text-zinc-900 dark:text-zinc-200">草稿 #{{ draft.id }}</h1>
+            <span class="text-[15px]">{{ platform_meta.get('icon', '') }}</span>
+            <span class="text-[12px] text-zinc-500 dark:text-zinc-400">{{ platform_meta.get('name', draft.platform) }}</span>
+            <span class="text-[9px] px-2 py-0.5 rounded-full font-medium
+                {% if draft.status == 'approved' %}bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400
+                {% elif draft.status == 'rejected' %}bg-red-50 dark:bg-red-900/30 text-red-500 dark:text-red-400
+                {% else %}bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400{% endif %}">
+                {% if draft.status == 'approved' %}已通过
+                {% elif draft.status == 'rejected' %}已驳回
+                {% else %}草稿{% endif %}
+            </span>
+        </div>
+        <div class="text-[10px] text-zinc-400 dark:text-zinc-500 mt-1">
+            v{{ draft.version }} · 创建 <time datetime="{{ draft.created_at }}">{{ draft.created_at[:16] }}</time> · 更新 <time datetime="{{ draft.updated_at }}">{{ draft.updated_at[:16] }}</time>
+        </div>
+    </div>
+
+    <!-- 原始知识条目（折叠） -->
+    {% if entry %}
+    <details class="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-2d p-5 mb-5 group">
+        <summary class="cursor-pointer list-none flex items-center justify-between">
+            <h2 class="text-[13px] font-semibold text-zinc-600 dark:text-zinc-400">原始知识：{{ entry.title[:50] }}</h2>
+            <span class="text-zinc-400 dark:text-zinc-500 group-open:rotate-180 transition-transform text-[11px]">▼</span>
+        </summary>
+        <div class="mt-3 text-[13px] text-zinc-600 dark:text-zinc-400 border-t border-zinc-100 dark:border-zinc-800 pt-3 max-h-[250px] overflow-y-auto">
+            <div class="flex flex-wrap gap-1.5 mb-2">
+                {% if entry.tags %}
+                    {% for t in entry.tags.split(',')[:5] %}
+                    <span class="text-[9px] px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500">{{ t.strip() }}</span>
+                    {% endfor %}
+                {% endif %}
+            </div>
+            <div class="entry-content text-[13px] whitespace-pre-wrap">{{ entry.summary_markdown[:2000] }}</div>
+        </div>
+    </details>
+    {% endif %}
+
+    <!-- 草稿内容 -->
+    <div class="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-2d p-5 mb-5">
+        <div class="flex items-center justify-between mb-3">
+            <h2 class="text-[14px] font-semibold text-zinc-700 dark:text-zinc-200">生成内容</h2>
+            <span class="text-[10px] text-zinc-400 dark:text-zinc-500">{{ draft.content_text|length }} 字符</span>
+        </div>
+
+        <form id="edit-form" hx-post="/api/agent/draft/{{ draft.id }}/edit" hx-target="#edit-status">
+            <textarea name="content_text" rows="18"
+                      class="w-full px-3 py-3 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-transparent focus:border-zinc-300 dark:focus:border-zinc-600 focus:bg-white dark:focus:bg-zinc-900 text-[13px] text-zinc-700 dark:text-zinc-300 leading-relaxed outline-none transition-colors">{{ draft.content_text }}</textarea>
+            <div id="edit-status" class="text-[12px] mt-2"></div>
+            <button type="submit" class="mt-2 px-4 py-2 bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 text-[12px] rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors">
+                保存修改
+            </button>
+        </form>
+    </div>
+
+    <!-- 口播音频（TTS） -->
+    <div id="tts-panel" hx-get="/api/agent/draft/{{ draft.id }}/tts-panel" hx-trigger="load">
+        <div class="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-2d p-5 mb-5">
+            <div class="text-center py-4 text-[13px] text-zinc-400 dark:text-zinc-500 animate-pulse">
+                🎙️ 加载口播音频模块…
+            </div>
+        </div>
+    </div>
+
+    <!-- 内容评分 + 预测 -->
+    <div id="score-section" hx-get="/agent/draft/{{ draft.id }}/score-row" hx-trigger="load">
+        <div class="text-center py-6">
+            <button onclick="scoreDraft({{ draft.id }})"
+                    class="px-5 py-2.5 bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 text-[13px] font-medium rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors">
+                AI 打分 + 预测传播表现
+            </button>
+            <span id="score-status" class="text-[12px] text-zinc-400 dark:text-zinc-500 ml-3"></span>
+        </div>
+    </div>
+
+    <!-- 操作区 -->
+    <div class="flex items-center justify-center gap-3 pb-12">
+        {% if draft.status != 'approved' %}
+        <button onclick="approveDraft({{ draft.id }})"
+                class="px-5 py-2.5 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 text-[13px] font-medium rounded-lg hover:bg-emerald-200 dark:hover:bg-emerald-900/50 transition-colors">
+            通过审核
+        </button>
+        {% endif %}
+        {% if draft.status != 'rejected' %}
+        <button onclick="rejectDraft({{ draft.id }})"
+                class="px-5 py-2.5 bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-[13px] font-medium rounded-lg hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors">
+            驳回
+        </button>
+        {% endif %}
+        <button onclick="regenerateDraft({{ draft.id }})"
+                class="px-5 py-2.5 bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 text-[13px] font-medium rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors">
+            重新生成
+        </button>
+        <span id="action-status" class="text-[12px] text-zinc-500 dark:text-zinc-400"></span>
+    </div>
+</div>
+
+<script>
+function approveDraft(id) {
+    if (!confirm('确定通过这条草稿吗？')) return;
+    fetch('/api/agent/draft/' + id + '/approve', { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+            if (d.ok) location.reload();
+            else alert('操作失败');
+        });
+}
+function rejectDraft(id) {
+    if (!confirm('确定驳回这条草稿吗？')) return;
+    fetch('/api/agent/draft/' + id + '/reject', { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+            if (d.ok) location.reload();
+            else alert('操作失败');
+        });
+}
+function regenerateDraft(id) {
+    if (!confirm('重新生成将创建新版本，确定吗？')) return;
+    document.getElementById('action-status').innerHTML = '<span class="text-[12px] text-zinc-500 animate-pulse">⏳ 重新生成中...</span>';
+    fetch('/api/agent/draft/' + id + '/regenerate', { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+            if (d.status === 'ok') {
+                pollRegenStatus(d.job_id);
+            }
+        });
+}
+function pollRegenStatus(jobId) {
+    const interval = setInterval(() => {
+        fetch('/api/agent/generate/status/' + jobId)
+            .then(r => r.text())
+            .then(html => {
+                if (html.includes('生成完成')) {
+                    clearInterval(interval);
+                    location.reload();
+                } else if (html.includes('❌')) {
+                    clearInterval(interval);
+                    document.getElementById('action-status').innerHTML = html;
+                }
+            });
+    }, 2000);
+}
+async function scoreDraft(id) {
+    document.getElementById('score-status').innerHTML = '<span class="text-[12px] text-zinc-500 animate-pulse">⏳ 评分中...</span>';
+    const resp = await fetch('/api/agent/draft/' + id + '/score', { method: 'POST' });
+    const data = await resp.json();
+    if (data.scores && !data.scores._error) {
+        htmx.ajax('GET', '/agent/draft/' + id + '/score-row', { target: '#score-section', swap: 'outerHTML' });
+        document.getElementById('score-status').innerHTML = '评分完成';
+    } else {
+        document.getElementById('score-status').innerHTML = '评分失败: ' + (data.scores?.one_liner || '');
+    }
+}
+</script>
+
+{% endblock %}

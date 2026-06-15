@@ -1,0 +1,348 @@
+{% extends "base.html" %}
+{% block title %}语音克隆 — OmniCast{% endblock %}
+{% block content %}
+
+<div class="max-w-4xl mx-auto">
+    <div class="mb-6">
+        <h1 class="text-[16px] font-bold text-zinc-900 dark:text-zinc-200">🎙️ 语音克隆</h1>
+        <p class="text-[13px] text-zinc-500 dark:text-zinc-400 mt-1">
+            上传或录制一段 15-60 秒的清晰语音，AI 将复刻你的声音。
+            之后生成口播文案时，即可一键合成音频，无需自己录制。
+        </p>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <!-- 左栏：模式切换 -->
+        <div class="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-2d p-6">
+            <!-- 模式切换 tabs -->
+            <div class="flex border-b border-zinc-200 dark:border-zinc-800 mb-5">
+                <button id="tab-upload" onclick="switchTab('upload')"
+                        class="tab-btn px-4 py-2.5 text-[13px] font-medium border-b-2 border-zinc-900 dark:border-zinc-100 text-zinc-900 dark:text-zinc-100 transition-colors">
+                    📁 上传文件
+                </button>
+                <button id="tab-record" onclick="switchTab('record')"
+                        class="tab-btn px-4 py-2.5 text-[13px] font-medium border-b-2 border-transparent text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-400 transition-colors">
+                    🎤 即时录制
+                </button>
+            </div>
+
+            <!-- ====== 上传模式 ====== -->
+            <div id="panel-upload">
+                <h2 class="text-[14px] font-semibold text-zinc-700 dark:text-zinc-200 mb-4">选择音频文件</h2>
+
+                <form id="upload-form"
+                      hx-post="/api/agent/speaker/upload"
+                      hx-target="#upload-status"
+                      hx-swap="innerHTML"
+                      hx-encoding="multipart/form-data">
+
+                    <div class="mb-4">
+                        <label class="block text-[12px] font-medium text-zinc-600 dark:text-zinc-400 mb-2">
+                            支持 WAV / MP3 / M4A 格式
+                        </label>
+                        <input type="file" name="audio" accept="audio/wav,audio/mpeg,audio/mp4,audio/x-m4a"
+                               class="w-full text-[13px] text-zinc-600 dark:text-zinc-400
+                                      file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0
+                                      file:text-[12px] file:font-medium
+                                      file:bg-zinc-100 dark:file:bg-zinc-800
+                                      file:text-zinc-700 dark:file:text-zinc-300
+                                      hover:file:bg-zinc-200 dark:hover:file:bg-zinc-700
+                                      file:transition-colors file:cursor-pointer">
+                    </div>
+
+                    <div class="mb-5">
+                        <label class="block text-[12px] font-medium text-zinc-600 dark:text-zinc-400 mb-2">
+                            参考音频中说的内容（可选，填写可提高克隆质量）
+                        </label>
+                        <input type="text" name="prompt_text" id="prompt-text-upload"
+                               placeholder="例如：大家好，我是XXX，今天来聊聊AI..."
+                               class="w-full px-3 py-2.5 rounded-lg bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700
+                                      text-[13px] text-zinc-700 dark:text-zinc-300 placeholder:text-zinc-400
+                                      focus:outline-none focus:border-zinc-400 dark:focus:border-zinc-600 transition-colors">
+                    </div>
+
+                    <button type="submit"
+                            class="w-full py-2.5 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900
+                                   text-[13px] font-medium rounded-lg hover:opacity-90 transition-opacity">
+                        上传并保存
+                    </button>
+                </form>
+
+                <div id="upload-status" class="mt-4"></div>
+            </div>
+
+            <!-- ====== 录制模式 ====== -->
+            <div id="panel-record" class="hidden">
+                <h2 class="text-[14px] font-semibold text-zinc-700 dark:text-zinc-200 mb-4">录制你的声音</h2>
+
+                <!-- 录制控件 -->
+                <div class="mb-4">
+                    <div class="flex items-center gap-3 mb-3">
+                        <button id="btn-start-record" onclick="startRecording()"
+                                class="px-5 py-2.5 bg-red-500 text-white text-[13px] font-medium rounded-full
+                                       hover:bg-red-600 transition-colors flex items-center gap-2">
+                            <span class="w-2.5 h-2.5 bg-white rounded-full animate-pulse hidden" id="record-dot"></span>
+                            <span id="btn-record-text">开始录制</span>
+                        </button>
+                        <button id="btn-stop-record" onclick="stopRecording()"
+                                class="px-5 py-2.5 bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-200
+                                       text-[13px] font-medium rounded-lg hover:bg-zinc-300 dark:hover:bg-zinc-600
+                                       transition-colors hidden">
+                            停止录制
+                        </button>
+                        <span id="record-timer" class="text-[14px] font-mono text-zinc-500 dark:text-zinc-400 hidden">00:00</span>
+                    </div>
+                    <p id="record-hint" class="text-[11px] text-zinc-400 dark:text-zinc-500">
+                        点击「开始录制」后对着麦克风说话，建议 15-60 秒
+                    </p>
+                </div>
+
+                <!-- 录制预览 -->
+                <div id="record-preview" class="hidden mb-4 p-4 bg-zinc-50 dark:bg-zinc-800 rounded-lg">
+                    <p class="text-[12px] font-medium text-zinc-600 dark:text-zinc-400 mb-2">录制预览：</p>
+                    <audio id="record-audio" controls class="h-10 w-full mb-3"></audio>
+                    <div class="flex items-center gap-2">
+                        <button onclick="retryRecording()"
+                                class="px-4 py-2 bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300
+                                       text-[12px] rounded-lg hover:bg-zinc-300 dark:hover:bg-zinc-600 transition-colors">
+                            重新录制
+                        </button>
+                        <button onclick="saveRecording()"
+                                class="px-4 py-2 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900
+                                       text-[12px] font-medium rounded-lg hover:opacity-90 transition-opacity">
+                            保存录音
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 参考文本 -->
+                <div class="mb-5">
+                    <label class="block text-[12px] font-medium text-zinc-600 dark:text-zinc-400 mb-2">
+                        你刚才说了什么？（可选，填写可提高克隆质量）
+                    </label>
+                    <input type="text" name="prompt_text" id="prompt-text-record"
+                           placeholder="例如：大家好，我是XXX，今天来聊聊AI..."
+                           class="w-full px-3 py-2.5 rounded-lg bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700
+                                  text-[13px] text-zinc-700 dark:text-zinc-300 placeholder:text-zinc-400
+                                  focus:outline-none focus:border-zinc-400 dark:focus:border-zinc-600 transition-colors">
+                </div>
+
+                <div id="record-status" class="mt-4"></div>
+            </div>
+        </div>
+
+        <!-- 右栏：状态 + 建议 -->
+        <div class="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-2d p-6">
+            <h2 class="text-[14px] font-semibold text-zinc-700 dark:text-zinc-200 mb-4">当前状态</h2>
+
+            <div id="speaker-status" hx-get="/api/agent/speaker/status" hx-trigger="load">
+                <!-- HTMX 加载状态片段 -->
+            </div>
+
+            <div class="mt-6 pt-5 border-t border-zinc-100 dark:border-zinc-800">
+                <h3 class="text-[12px] font-medium text-zinc-500 dark:text-zinc-400 mb-3">录制建议</h3>
+                <ul class="space-y-2 text-[12px] text-zinc-500 dark:text-zinc-400">
+                    <li class="flex items-start gap-2">
+                        <span class="text-emerald-500 mt-0.5">✓</span>
+                        <span>在安静环境中录制，减少背景噪音</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <span class="text-emerald-500 mt-0.5">✓</span>
+                        <span>用自然的语速和语调说话，不要刻意</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <span class="text-emerald-500 mt-0.5">✓</span>
+                        <span>录制 15-60 秒即可，过长不会提升效果</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <span class="text-emerald-500 mt-0.5">✓</span>
+                        <span>说出完整的中文句子，包含你日常口播的语调</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <span class="text-amber-500 mt-0.5">⚠</span>
+                        <span>不要用变声器或故意压低嗓音</span>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    {% if speaker.configured %}
+    <div class="mt-5 bg-emerald-50 dark:bg-emerald-900/10 rounded-xl border border-emerald-200 dark:border-emerald-900/30 p-4">
+        <p class="text-[13px] text-emerald-700 dark:text-emerald-400">
+            🎉 声音样本已就绪！现在去<a href="/agent" class="underline font-medium hover:text-emerald-800 dark:hover:text-emerald-300">内容工厂</a>
+            生成一篇口播文案，然后点击「生成口播音频」试试效果吧。
+        </p>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+// ═══════════════════════════════════════════
+//  模式切换
+// ═══════════════════════════════════════════
+function switchTab(mode) {
+    const tabs = document.querySelectorAll('.tab-btn');
+    tabs.forEach(t => {
+        t.classList.remove('border-zinc-900', 'dark:border-zinc-100', 'text-zinc-900', 'dark:text-zinc-100');
+        t.classList.add('border-transparent', 'text-zinc-400', 'dark:text-zinc-500');
+    });
+    const activeTab = document.getElementById('tab-' + mode);
+    activeTab.classList.remove('border-transparent', 'text-zinc-400', 'dark:text-zinc-500');
+    activeTab.classList.add('border-zinc-900', 'dark:border-zinc-100', 'text-zinc-900', 'dark:text-zinc-100');
+
+    document.getElementById('panel-upload').classList.toggle('hidden', mode !== 'upload');
+    document.getElementById('panel-record').classList.toggle('hidden', mode !== 'record');
+}
+
+// ═══════════════════════════════════════════
+//  录制引擎
+// ═══════════════════════════════════════════
+let mediaRecorder = null;
+let audioChunks = [];
+let recordStartTime = 0;
+let recordTimerInterval = null;
+let recordedBlob = null;
+
+async function startRecording() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                sampleRate: 44100,
+                channelCount: 1,
+                echoCancellation: true,
+                noiseSuppression: true,
+            }
+        });
+
+        // 优先使用 webm（Chrome/Firefox），回退到其他格式
+        let mimeType = 'audio/webm;codecs=opus';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+            mimeType = 'audio/webm';
+        }
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+            mimeType = 'audio/mp4';
+        }
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+            mimeType = ''; // 浏览器默认
+        }
+
+        audioChunks = [];
+        mediaRecorder = new MediaRecorder(stream, { mimeType: mimeType || undefined });
+
+        mediaRecorder.ondataavailable = (e) => {
+            if (e.data.size > 0) audioChunks.push(e.data);
+        };
+
+        mediaRecorder.onstop = () => {
+            // 停止所有音轨
+            stream.getTracks().forEach(t => t.stop());
+            // 创建 Blob
+            const mime = mediaRecorder.mimeType || 'audio/webm';
+            recordedBlob = new Blob(audioChunks, { type: mime });
+            // 显示预览
+            const audioEl = document.getElementById('record-audio');
+            audioEl.src = URL.createObjectURL(recordedBlob);
+            document.getElementById('record-preview').classList.remove('hidden');
+        };
+
+        mediaRecorder.start();
+        recordStartTime = Date.now();
+
+        // UI 更新
+        document.getElementById('btn-start-record').classList.add('hidden');
+        document.getElementById('btn-stop-record').classList.remove('hidden');
+        document.getElementById('record-dot').classList.remove('hidden');
+        document.getElementById('record-timer').classList.remove('hidden');
+        document.getElementById('record-preview').classList.add('hidden');
+        document.getElementById('record-hint').textContent = '正在录制中...请在安静环境中清晰说话';
+
+        // 计时器
+        recordTimerInterval = setInterval(updateTimer, 200);
+    } catch (err) {
+        alert('无法访问麦克风: ' + (err.message || '请检查浏览器权限设置'));
+        console.error('getUserMedia error:', err);
+    }
+}
+
+function stopRecording() {
+    if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
+
+    mediaRecorder.stop();
+    clearInterval(recordTimerInterval);
+
+    document.getElementById('btn-start-record').classList.remove('hidden');
+    document.getElementById('btn-stop-record').classList.add('hidden');
+    document.getElementById('record-dot').classList.add('hidden');
+    document.getElementById('record-timer').classList.add('hidden');
+    document.getElementById('btn-record-text').textContent = '重新录制';
+    document.getElementById('record-hint').textContent = '点击试听，满意后点击「保存录音」';
+}
+
+function updateTimer() {
+    const elapsed = Math.round((Date.now() - recordStartTime) / 1000);
+    const mins = Math.floor(elapsed / 60);
+    const secs = elapsed % 60;
+    document.getElementById('record-timer').textContent =
+        String(mins).padStart(2, '0') + ':' + String(secs).padStart(2, '0');
+
+    // 超过 60 秒自动停止
+    if (elapsed >= 60) {
+        stopRecording();
+        document.getElementById('record-hint').textContent = '已达到 60 秒，自动停止录制';
+    }
+}
+
+function retryRecording() {
+    recordedBlob = null;
+    document.getElementById('record-audio').src = '';
+    document.getElementById('record-preview').classList.add('hidden');
+    document.getElementById('btn-record-text').textContent = '开始录制';
+    document.getElementById('record-hint').textContent = '点击「开始录制」后对着麦克风说话，建议 15-60 秒';
+}
+
+async function saveRecording() {
+    if (!recordedBlob) {
+        alert('请先录制一段音频');
+        return;
+    }
+
+    const promptText = document.getElementById('prompt-text-record').value.trim();
+
+    // 构建 FormData
+    const formData = new FormData();
+    const ext = recordedBlob.type.includes('webm') ? 'webm' :
+                recordedBlob.type.includes('mp4') ? 'm4a' : 'wav';
+    formData.append('audio', recordedBlob, 'recording.' + ext);
+    formData.append('prompt_text', promptText);
+
+    // 显示上传中
+    document.getElementById('record-status').innerHTML =
+        '<span class="text-[13px] text-zinc-500 dark:text-zinc-400">' +
+        '<span class="inline-block w-4 h-4 border-2 border-zinc-300 dark:border-zinc-600 ' +
+        'border-t-zinc-500 dark:border-t-zinc-400 rounded-full animate-spin mr-2 align-middle"></span>' +
+        '正在上传录音…</span>';
+
+    try {
+        const resp = await fetch('/api/agent/speaker/upload', {
+            method: 'POST',
+            body: formData,
+        });
+        const html = await resp.text();
+        document.getElementById('record-status').innerHTML = html;
+
+        // 更新 speaker 状态（右栏）
+        if (resp.ok) {
+            htmx.ajax('GET', '/api/agent/speaker/status', {
+                target: '#speaker-status',
+                swap: 'innerHTML'
+            });
+        }
+    } catch (err) {
+        document.getElementById('record-status').innerHTML =
+            '<div class="text-red-500 dark:text-red-400 text-[13px]">上传失败: ' + err.message + '</div>';
+    }
+}
+</script>
+
+{% endblock %}

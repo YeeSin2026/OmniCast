@@ -1,0 +1,95 @@
+<!-- HTMX 片段：评分 + 预测展示 -->
+<div class="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-2d p-5 mb-5">
+    <div class="flex items-center justify-between mb-4">
+        <h2 class="text-[14px] font-semibold text-zinc-800 dark:text-zinc-200">内容评分</h2>
+        <span class="text-[22px] font-bold
+            {% if scores.composite >= 7 %}text-emerald-600 dark:text-emerald-400
+            {% elif scores.composite >= 5 %}text-amber-600 dark:text-amber-400
+            {% else %}text-red-500 dark:text-red-400{% endif %}">
+            {{ "%.1f"|format(scores.composite) }}<span class="text-[12px] font-normal text-zinc-400 dark:text-zinc-500">/10</span>
+        </span>
+    </div>
+
+    <!-- 7维条形图 -->
+    <div class="grid grid-cols-1 gap-1.5 mb-4">
+        {% set dims = [
+            ('ER', '情感共鸣', 1.5),
+            ('SR', '社会共振', 1.5),
+            ('HP', '钩子强度', 1.5),
+            ('QL', '金句密度', 1.0),
+            ('NA', '叙事性', 1.0),
+            ('AB', '受众广度', 1.0),
+            ('TS', '分享冲动', 1.0),
+        ] %}
+        {% for key, label, weight in dims %}
+        {% set val = scores.get(key, 0) %}
+        <div class="flex items-center gap-3">
+            <span class="w-8 text-[10px] text-zinc-400 dark:text-zinc-500 text-right font-mono">{{ key }}</span>
+            <div class="flex-1 bg-zinc-100 dark:bg-zinc-800 rounded-full h-4 overflow-hidden">
+                <div class="h-full rounded-full transition-all duration-500
+                    {% if val >= 4 %}bg-emerald-500
+                    {% elif val >= 3 %}bg-amber-500
+                    {% elif val >= 2 %}bg-orange-400
+                    {% else %}bg-red-400{% endif %}"
+                    style="width:{{ val * 20 }}%"></div>
+            </div>
+            <span class="w-4 text-[10px] font-mono text-zinc-600 dark:text-zinc-400">{{ val }}</span>
+            <span class="w-16 text-[10px] text-zinc-400 dark:text-zinc-500">{{ label }}</span>
+            <span class="w-6 text-[9px] text-zinc-300 dark:text-zinc-600">×{{ weight }}</span>
+        </div>
+        {% endfor %}
+    </div>
+
+    {% if scores.one_liner %}
+    <div class="text-[13px] text-zinc-600 dark:text-zinc-400 border-t border-zinc-100 dark:border-zinc-800 pt-3 mt-2">
+        {{ scores.one_liner }}
+    </div>
+    {% endif %}
+
+    <!-- 预测 -->
+    {% if scores.prediction and not scores.prediction._error %}
+    {% set p = scores.prediction %}
+    <div class="border-t border-zinc-100 dark:border-zinc-800 pt-4 mt-4">
+        <h3 class="text-[13px] font-semibold text-zinc-700 dark:text-zinc-300 mb-3">传播预测（盲预测·不可篡改）</h3>
+        <div class="flex items-center gap-2 mb-3">
+            <span class="text-[12px] text-zinc-500 dark:text-zinc-400">最可能：</span>
+            <span class="px-3 py-1 rounded-full text-[11px] font-medium
+                {% if p.headline_bucket == 'mega' %}bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400
+                {% elif p.headline_bucket == 'viral' %}bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400
+                {% elif p.headline_bucket == 'hit' %}bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400
+                {% elif p.headline_bucket == 'base' %}bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400
+                {% else %}bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400{% endif %}">
+                {{ p.headline_bucket | upper }}
+            </span>
+            {% if p.central_estimate %}
+            <span class="text-[11px] text-zinc-500 dark:text-zinc-400">中枢 ~{{ p.central_estimate }} 曝光</span>
+            {% endif %}
+        </div>
+
+        {% if p.distribution %}
+        <div class="flex gap-1 h-5 rounded-full overflow-hidden mb-2">
+            {% for bucket, pct in p.distribution.items() %}
+            {% set colors = {'bottom': 'bg-zinc-300 dark:bg-zinc-600', 'base': 'bg-emerald-400', 'hit': 'bg-amber-400', 'viral': 'bg-orange-400', 'mega': 'bg-red-500'} %}
+            <div class="{{ colors.get(bucket, 'bg-zinc-300') }}" style="width:{{ pct }}%" title="{{ bucket }}: {{ pct }}%"></div>
+            {% endfor %}
+        </div>
+        <div class="flex flex-wrap gap-2 text-[9px] text-zinc-400 dark:text-zinc-500 mb-3">
+            {% for bucket, pct in p.distribution.items() %}
+            <span>{{ bucket }}: {{ pct }}%</span>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if p.reason %}
+        <div class="text-[12px] text-zinc-600 dark:text-zinc-400">
+            {{ p.reason }}
+        </div>
+        {% endif %}
+        {% if p.risk_factor %}
+        <div class="text-[11px] text-red-500 dark:text-red-400 mt-1">
+            ⚠ {{ p.risk_factor }}
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>

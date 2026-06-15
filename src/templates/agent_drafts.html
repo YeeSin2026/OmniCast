@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}草稿审核 — OmniCast{% endblock %}
+{% block content %}
+
+<div class="max-w-7xl mx-auto">
+    <div class="mb-5">
+        <h1 class="text-[16px] font-bold text-zinc-900 dark:text-zinc-200">草稿审核</h1>
+        <p class="text-[12px] text-zinc-500 dark:text-zinc-400 mt-1">审核、编辑和评分已生成的内容草稿</p>
+    </div>
+
+    <!-- 筛选器 -->
+    <div class="flex items-center gap-4 mb-5">
+        <div class="bg-zinc-100 dark:bg-zinc-800 rounded-lg p-1 flex gap-0.5">
+            <a href="/agent/drafts"
+               class="px-3 py-1.5 rounded-md text-[12px] transition-colors
+                      {% if not current_status %}bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-200 shadow-sm{% else %}text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300{% endif %}">
+                全部
+            </a>
+            <a href="/agent/drafts?status=draft"
+               class="px-3 py-1.5 rounded-md text-[12px] transition-colors
+                      {% if current_status == 'draft' %}bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-200 shadow-sm{% else %}text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300{% endif %}">
+                草稿
+            </a>
+            <a href="/agent/drafts?status=approved"
+               class="px-3 py-1.5 rounded-md text-[12px] transition-colors
+                      {% if current_status == 'approved' %}bg-white dark:bg-zinc-700 text-emerald-700 dark:text-emerald-400 shadow-sm{% else %}text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300{% endif %}">
+                已通过
+            </a>
+            <a href="/agent/drafts?status=rejected"
+               class="px-3 py-1.5 rounded-md text-[12px] transition-colors
+                      {% if current_status == 'rejected' %}bg-white dark:bg-zinc-700 text-red-600 dark:text-red-400 shadow-sm{% else %}text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300{% endif %}">
+                已驳回
+            </a>
+        </div>
+
+        {% if all_platforms %}
+        <select onchange="location.href='/agent/drafts?status={{ current_status }}&platform='+this.value"
+                class="text-[12px] border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 outline-none focus:border-zinc-400 dark:focus:border-zinc-500">
+            <option value="">全部平台</option>
+            {% for p in all_platforms %}
+            {% set meta = platforms_meta.get(p, {}) %}
+            <option value="{{ p }}" {% if current_platform == p %}selected{% endif %}>{{ meta.get('icon', '') }} {{ meta.get('name', p) }}</option>
+            {% endfor %}
+        </select>
+        {% endif %}
+    </div>
+
+    <!-- 草稿表格 -->
+    <div class="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-2d overflow-hidden">
+        {% if drafts %}
+        <table class="w-full">
+            <thead>
+                <tr class="border-b border-zinc-100 dark:border-zinc-800">
+                    <th class="text-left px-4 py-3 text-[10px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">标题</th>
+                    <th class="text-left px-4 py-3 text-[10px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">平台</th>
+                    <th class="text-left px-4 py-3 text-[10px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">状态</th>
+                    <th class="text-left px-4 py-3 text-[10px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">版本</th>
+                    <th class="text-right px-4 py-3 text-[10px] font-semibold text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">更新时间</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for d in drafts %}
+                <tr class="border-b border-zinc-50 dark:border-zinc-800/50 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 transition-colors">
+                    <td class="px-4 py-3">
+                        <a href="/agent/draft/{{ d.id }}" class="text-[13px] font-medium text-zinc-800 dark:text-zinc-200 truncate max-w-[300px] block hover:text-zinc-900 dark:hover:text-zinc-100">{{ d.title or '?' }}</a>
+                    </td>
+                    <td class="px-4 py-3">
+                        <span class="text-[12px]">
+                            {% set meta = platforms_meta.get(d.platform, {}) %}
+                            {{ meta.get('icon', '') }}
+                        </span>
+                        <span class="text-[11px] text-zinc-500 dark:text-zinc-400 ml-1">{{ meta.get('name', d.platform) }}</span>
+                    </td>
+                    <td class="px-4 py-3">
+                        <span class="text-[9px] px-2 py-0.5 rounded-full font-medium
+                            {% if d.status == 'approved' %}bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400
+                            {% elif d.status == 'rejected' %}bg-red-50 dark:bg-red-900/30 text-red-500 dark:text-red-400
+                            {% else %}bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400{% endif %}">
+                            {% if d.status == 'approved' %}已通过
+                            {% elif d.status == 'rejected' %}已驳回
+                            {% else %}草稿{% endif %}
+                        </span>
+                    </td>
+                    <td class="px-4 py-3 text-[11px] text-zinc-400 dark:text-zinc-500">v{{ d.version }}</td>
+                    <td class="px-4 py-3 text-right text-[10px] text-zinc-400 dark:text-zinc-500 font-mono"><time datetime="{{ d.updated_at }}">{{ d.updated_at[:16] }}</time></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="flex flex-col items-center justify-center py-20 text-zinc-400 dark:text-zinc-500">
+            <p class="text-[13px]">暂无草稿</p>
+            <p class="text-[11px] mt-1">选择知识条目生成内容</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% endblock %}

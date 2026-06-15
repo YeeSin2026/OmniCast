@@ -1,0 +1,33 @@
+{# HTMX 片段：URL 处理状态 — 被 /api/agent/url-submit 和 /api/agent/url-status 使用 #}
+{% if error %}
+<div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4">
+    <div class="text-[13px] text-red-600 dark:text-red-400">{{ error }}</div>
+</div>
+
+{% elif done %}
+<div class="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-4">
+    <div class="text-[13px] text-emerald-600 dark:text-emerald-400 mb-1">链接处理完成，正在跳转…</div>
+    {% if title %}
+    <div class="text-[12px] text-zinc-600 dark:text-zinc-400 truncate mb-1">{{ title[:80] }}</div>
+    {% endif %}
+    {% if summary %}
+    <div class="text-[11px] text-zinc-400 dark:text-zinc-500 line-clamp-2">{{ summary[:150] }}</div>
+    {% endif %}
+</div>
+<script>
+    setTimeout(function() {
+        window.location.href = '/agent/generate/{{ entry_id }}';
+    }, 800);
+</script>
+
+{% else %}
+<div id="url-status"
+     hx-get="/api/agent/url-status/{{ job_id }}"
+     hx-trigger="every 2s"
+     hx-swap="outerHTML">
+    <div class="flex items-center gap-3 text-[13px] text-zinc-500 dark:text-zinc-400">
+        <span class="inline-block w-4 h-4 border-2 border-zinc-300 dark:border-zinc-600 border-t-zinc-500 dark:border-t-zinc-400 rounded-full animate-spin"></span>
+        <span>正在分析链接内容，请稍候…</span>
+    </div>
+</div>
+{% endif %}

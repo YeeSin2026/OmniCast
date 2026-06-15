@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}合并创作 — OmniCast{% endblock %}
+{% block content %}
+
+<div class="max-w-4xl mx-auto">
+    <div class="mb-5">
+        <a href="/agent" class="text-[13px] text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors">← 返回</a>
+        <h1 class="text-[16px] font-bold text-zinc-900 dark:text-zinc-200 mt-2">
+            合并创作
+            <span class="text-[13px] font-normal text-zinc-400 dark:text-zinc-500 ml-2">{{ entries|length }} 条素材</span>
+        </h1>
+    </div>
+
+    <!-- 已选条目预览 -->
+    <div class="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-2d p-5 mb-5">
+        <h2 class="text-[14px] font-semibold text-zinc-700 dark:text-zinc-200 mb-3">已选素材（将全部作为创作参考）</h2>
+        <div class="space-y-2 max-h-[350px] overflow-y-auto">
+            {% for entry in entries %}
+            <details class="group border border-zinc-100 dark:border-zinc-800 rounded-lg p-3">
+                <summary class="cursor-pointer list-none flex items-center justify-between">
+                    <div class="flex-1 min-w-0">
+                        <span class="text-[11px] font-mono text-zinc-400 mr-2">#{{ entry.id }}</span>
+                        <span class="text-[13px] font-medium text-zinc-800 dark:text-zinc-200">{{ entry.title[:60] }}</span>
+                    </div>
+                    <span class="text-[11px] text-zinc-400 shrink-0 ml-2">▼</span>
+                </summary>
+                <div class="mt-2 pt-2 border-t border-zinc-100 dark:border-zinc-800 text-[12px] text-zinc-500 dark:text-zinc-400">
+                    <div class="flex flex-wrap gap-1.5 mb-2">
+                        {% if entry.tags %}
+                            {% for t in entry.tags.split(',')[:4] %}
+                            <span class="text-[9px] px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500">{{ t.strip() }}</span>
+                            {% endfor %}
+                        {% endif %}
+                    </div>
+                    <div class="whitespace-pre-wrap text-[12px]">{{ entry.summary_markdown[:500] }}{% if entry.summary_markdown|length > 500 %}…{% endif %}</div>
+                </div>
+            </details>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- 生成配置 -->
+    <form id="generate-form" class="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-2d p-5 mb-5"
+          hx-post="/api/agent/generate-multi" hx-target="#generate-status" hx-indicator="#generate-btn">
+        <input type="hidden" name="knowledge_ids" value="{{ ids }}">
+
+        <!-- 话题 -->
+        <div class="mb-4">
+            <label class="text-[13px] font-medium text-zinc-700 dark:text-zinc-300">创作话题</label>
+            <input type="text" name="topic" value=""
+                   placeholder="留空则自动使用第一条素材标题"
+                   class="ml-2 w-2/3 px-3 py-1.5 text-[12px] border border-zinc-200 dark:border-zinc-700 rounded-lg bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 outline-none focus:border-zinc-400 dark:focus:border-zinc-500">
+            <span class="text-[10px] text-zinc-400 ml-2">用作知识库检索关键词</span>
+        </div>
+
+        <!-- 平台选择 -->
+        <h2 class="text-[14px] font-semibold text-zinc-900 dark:text-zinc-200 mb-3">选择平台</h2>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-5" id="platform-grid">
+            {% for p in all_platforms %}
+            {% set meta = platforms_meta.get(p, {}) %}
+            <label class="relative flex items-center gap-2 p-2.5 border rounded-lg cursor-pointer transition-all
+                          border-zinc-200 dark:border-zinc-700 hover:border-zinc-300 dark:hover:border-zinc-600">
+                <input type="checkbox" name="platforms" value="{{ p }}" checked class="accent-zinc-900 dark:accent-zinc-200">
+                <span class="text-[14px]">{{ meta.get('icon', '') }}</span>
+                <div>
+                    <div class="text-[12px] font-medium text-zinc-800 dark:text-zinc-200">{{ meta.get('name', p) }}</div>
+                </div>
+            </label>
+            {% endfor %}
+        </div>
+
+        <!-- 快捷操作 -->
+        <div class="flex gap-2 mb-5">
+            <button type="button" onclick="document.querySelectorAll('#platform-grid input').forEach(c=>c.checked=true)"
+                    class="text-[11px] text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200">全选</button>
+            <button type="button" onclick="document.querySelectorAll('#platform-grid input').forEach(c=>c.checked=false)"
+                    class="text-[11px] text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-300">取消全选</button>
+        </div>
+
+        <!-- 关联条数 -->
+        <div class="mb-4">
+            <label class="text-[13px] font-medium text-zinc-700 dark:text-zinc-300">自动关联条数</label>
+            <input type="number" name="max_related" value="3" min="0" max="20"
+                   class="ml-2 w-20 px-3 py-1.5 text-[12px] border border-zinc-200 dark:border-zinc-700 rounded-lg bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 outline-none focus:border-zinc-400 dark:focus:border-zinc-500">
+            <span class="text-[10px] text-zinc-400 ml-2">手动选择外，额外自动关联的条数；0=不自动关联</span>
+        </div>
+
+        <!-- 风格 -->
+        <div class="mb-4">
+            <label class="text-[13px] font-medium text-zinc-700 dark:text-zinc-300">风格基调</label>
+            <select name="tone_variant" class="ml-2 text-[12px] border border-zinc-200 dark:border-zinc-700 rounded-lg px-3 py-1.5 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 outline-none focus:border-zinc-400 dark:focus:border-zinc-500">
+                <option value="standard">标准布道</option>
+                <option value="hype">激进煽动</option>
+                <option value="balanced">理性分析</option>
+            </select>
+        </div>
+
+        <!-- 自定义指令 -->
+        <div class="mb-5">
+            <label class="text-[13px] font-medium text-zinc-700 dark:text-zinc-300 block mb-1">补充要求（可选）</label>
+            <textarea name="custom_instructions" rows="2" placeholder="例如：突出变现逻辑、强调新手友好、多引用原文案例..."
+                      class="w-full px-3 py-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-transparent focus:border-zinc-300 dark:focus:border-zinc-600 focus:bg-white dark:focus:bg-zinc-900 text-[13px] text-zinc-700 dark:text-zinc-300 placeholder-zinc-400 dark:placeholder-zinc-500 outline-none transition-colors"></textarea>
+        </div>
+
+        <!-- 生成按钮 -->
+        <button type="submit" id="generate-btn"
+                class="w-full py-2.5 bg-zinc-900 dark:bg-white dark:text-zinc-900 text-white text-[13px] font-medium rounded-lg hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors disabled:opacity-50">
+            开始生成（综合 {{ entries|length }} 条素材）
+        </button>
+        <div id="generate-status" class="mt-3 text-center"></div>
+    </form>
+</div>
+
+{% endblock %}
