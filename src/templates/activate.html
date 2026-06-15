@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>激活 — OmniCast</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'sans-serif'],
+                    },
+                }
+            }
+        };
+    </script>
+</head>
+<body class="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex items-center justify-center p-6">
+    <div class="w-full max-w-md">
+        <div class="text-center mb-8">
+            <h1 class="text-[24px] font-bold text-zinc-900 dark:text-zinc-100">OmniCast</h1>
+            <p class="text-[14px] text-zinc-500 dark:text-zinc-400 mt-1">知识驱动的全平台社媒内容工厂</p>
+        </div>
+
+        <div class="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-2d p-6">
+            <h2 class="text-[15px] font-semibold text-zinc-800 dark:text-zinc-200 mb-4">请输入激活码</h2>
+
+            <form id="activate-form" onsubmit="submitActivate(event)">
+                <input type="text" id="key-input" name="key"
+                       placeholder="OMC-XXXX-XXXX-XXXX"
+                       autocomplete="off" autofocus
+                       class="w-full px-4 py-3 text-[14px] text-center tracking-widest font-mono
+                              bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700
+                              rounded-lg outline-none focus:border-zinc-400 dark:focus:border-zinc-500
+                              text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-500
+                              uppercase transition-colors">
+
+                <p id="error-msg" class="text-[12px] text-red-500 dark:text-red-400 mt-2 hidden"></p>
+                <p id="success-msg" class="text-[12px] text-emerald-600 dark:text-emerald-400 mt-2 hidden"></p>
+
+                <button type="submit"
+                        class="w-full mt-4 py-2.5 bg-zinc-900 dark:bg-white dark:text-zinc-900 text-white text-[14px] font-medium rounded-lg hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors disabled:opacity-50">
+                    激活
+                </button>
+            </form>
+
+            <p class="text-[11px] text-zinc-400 dark:text-zinc-500 mt-4 text-center">
+                获取激活码请联系开发者
+            </p>
+        </div>
+    </div>
+
+    <script>
+    async function submitActivate(e) {
+        e.preventDefault();
+        var key = document.getElementById('key-input').value.trim();
+        var errorEl = document.getElementById('error-msg');
+        var successEl = document.getElementById('success-msg');
+        errorEl.classList.add('hidden');
+        successEl.classList.add('hidden');
+
+        if (!key) {
+            errorEl.textContent = '请输入激活码';
+            errorEl.classList.remove('hidden');
+            return;
+        }
+
+        try {
+            var formData = new FormData();
+            formData.append('key', key);
+            var resp = await fetch('/api/activate', { method: 'POST', body: formData });
+            var data = await resp.json();
+            if (data.ok) {
+                successEl.textContent = '激活成功，即将跳转…';
+                successEl.classList.remove('hidden');
+                setTimeout(function() { window.location.href = '/'; }, 800);
+            } else {
+                errorEl.textContent = data.error || '激活码无效';
+                errorEl.classList.remove('hidden');
+            }
+        } catch (err) {
+            errorEl.textContent = '网络错误，请重试';
+            errorEl.classList.remove('hidden');
+        }
+    }
+    </script>
+</body>
+</html>

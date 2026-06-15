@@ -41,7 +41,9 @@
 
     <!-- 生成配置 -->
     <form id="generate-form" class="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-2d p-5 mb-5"
-          hx-post="/api/agent/generate-multi" hx-target="#generate-status" hx-indicator="#generate-btn">
+          hx-post="/api/agent/generate-multi" hx-target="#generate-status" hx-swap="innerHTML"
+          hx-indicator="#generate-btn"
+          hx-on:htmx:before-request="document.getElementById('generate-status').innerHTML='<div class=\'flex items-center gap-2 text-[13px] text-zinc-500 dark:text-zinc-400\'><span class=\'inline-block w-4 h-4 border-2 border-zinc-300 dark:border-zinc-600 border-t-zinc-500 dark:border-t-zinc-400 rounded-full animate-spin\'></span>正在连接 LLM，分析知识关联…</div>'">
         <input type="hidden" name="knowledge_ids" value="{{ ids }}">
 
         <!-- 话题 -->
@@ -121,9 +123,12 @@
 
         <!-- 生成按钮 -->
         <button type="submit" id="generate-btn"
-                class="w-full py-2.5 bg-zinc-900 dark:bg-white dark:text-zinc-900 text-white text-[13px] font-medium rounded-lg hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors disabled:opacity-50"
-                onclick="setTimeout(function(){ document.getElementById('generate-status').scrollIntoView({behavior:'smooth',block:'center'}); }, 300)">
-            开始生成（综合 {{ entries|length }} 条素材）
+                class="w-full py-2.5 bg-zinc-900 dark:bg-white dark:text-zinc-900 text-white text-[13px] font-medium rounded-lg hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors disabled:opacity-60">
+            <span class="htmx-hide-when-request">开始生成（综合 {{ entries|length }} 条素材）</span>
+            <span class="htmx-indicator">
+                <span class="inline-block w-4 h-4 border-2 border-white/30 border-t-white dark:border-zinc-400/30 dark:border-t-zinc-600 rounded-full animate-spin mr-2"></span>
+                正在准备…
+            </span>
         </button>
         <div id="generate-status" class="mt-3 text-center min-h-[60px]"></div>
     </form>

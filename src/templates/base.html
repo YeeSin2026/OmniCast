@@ -53,6 +53,12 @@
         .dark .entry-content h3 { color: #a1a1aa; }
         .dark .entry-content blockquote { border-left-color: #52525b; color: #a1a1aa; }
         .dark .entry-content code { background: #27272a; }
+
+        /* HTMX 加载指示器 */
+        .htmx-indicator { display: none; }
+        .htmx-request .htmx-indicator { display: inline-flex; align-items: center; }
+        .htmx-request .htmx-indicator-block { display: block; }
+        .htmx-request .htmx-hide-when-request { display: none; }
     </style>
 </head>
 <body class="min-h-screen">
@@ -77,6 +83,15 @@
                           text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-300
                           {% endif %}">
                     草稿审核
+                </a>
+                <a href="/agent/benchmark"
+                   class="text-[13px] px-3 py-2 rounded-lg transition-colors
+                          {% if '/benchmark' in request.url.path %}
+                          bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-200 font-medium
+                          {% else %}
+                          text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-300
+                          {% endif %}">
+                    文案对标
                 </a>
                 <a href="/agent/speaker"
                    class="text-[13px] px-3 py-2 rounded-lg transition-colors

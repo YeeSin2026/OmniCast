@@ -9,7 +9,7 @@
             <h2 class="text-[14px] font-semibold text-zinc-900 dark:text-zinc-200">直接输入链接</h2>
             <span class="text-[9px] px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 font-medium">无需知识库</span>
         </div>
-        <form hx-post="/api/agent/url-submit" hx-target="#url-status" hx-indicator="#url-submit-btn">
+        <form hx-post="/api/agent/url-submit" hx-target="#url-status" hx-indicator="#url-submit-btn" hx-on::after-request="this.reset()">
             <div class="flex gap-2">
                 <div class="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-transparent focus-within:border-zinc-300 dark:focus-within:border-zinc-600 focus-within:bg-white dark:focus-within:bg-zinc-900 transition-colors">
                     <input type="text" name="url" placeholder="粘贴链接或抖音/小红书分享口令..." autocomplete="off"

@@ -5,6 +5,11 @@
 </div>
 
 {% elif done %}
+{% if return_to == 'benchmark' %}
+{# 对标页：不跳转，渲染预览片段 #}
+{{ benchmark_done_html | safe }}
+{% else %}
+{# 内容工厂：跳转到生成页 #}
 <div class="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-4">
     <div class="text-[13px] text-emerald-600 dark:text-emerald-400 mb-1">链接处理完成，正在跳转…</div>
     {% if title %}
@@ -19,10 +24,11 @@
         window.location.href = '/agent/generate/{{ entry_id }}';
     }, 800);
 </script>
+{% endif %}
 
 {% else %}
 <div id="url-status"
-     hx-get="/api/agent/url-status/{{ job_id }}"
+     hx-get="/api/agent/url-status/{{ job_id }}{% if return_to %}?return_to={{ return_to }}{% endif %}"
      hx-trigger="every 2s"
      hx-swap="outerHTML">
     <div class="flex items-center gap-3 text-[13px] text-zinc-500 dark:text-zinc-400">

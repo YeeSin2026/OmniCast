@@ -17,6 +17,9 @@ services:
       - OMNICAST_DB_PATH=/data/drafts.db
       - COSYVOICE_API_URL=${COSYVOICE_API_URL:-http://host.docker.internal:50000}
       - AUDIO_OUTPUT_DIR=/data/audio
+      - ACTIVATION_ENABLED=${ACTIVATION_ENABLED:-true}
+      - ACTIVATION_SECRET=${ACTIVATION_SECRET:-omnicast-os-2026}
+      - ACTIVATION_FILE=/data/.activated
 
 volumes:
   omnicast-data:

@@ -90,6 +90,22 @@ class DraftStore:
                     FOREIGN KEY (draft_id) REFERENCES content_drafts(id) ON DELETE CASCADE
                 )
             """)
+            # ── 本地内容提取表（独立于 OmniVault）──
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS extracted_content (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_url TEXT NOT NULL,
+                    title TEXT NOT NULL DEFAULT '',
+                    author TEXT NOT NULL DEFAULT '',
+                    platform TEXT NOT NULL DEFAULT '',
+                    raw_content TEXT NOT NULL DEFAULT '',
+                    tags TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    UNIQUE(source_url)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_extracted_url ON extracted_content(source_url)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_extracted_platform ON extracted_content(platform)")
             conn.commit()
             logger.info("OmniCast 数据库初始化完成")
         finally:
@@ -461,5 +477,87 @@ class DraftStore:
             except (json.JSONDecodeError, TypeError):
                 d["prediction"] = {}
             return d
+        finally:
+            conn.close()
+
+    # ═══════════════════════════════════════
+    #  本地内容提取（独立于 OmniVault）
+    # ═══════════════════════════════════════
+
+    def save_extracted(self, data: dict) -> int:
+        """保存提取的内容，返回 ID。已存在相同 URL 则更新。"""
+        now = datetime.now(timezone.utc).isoformat()
+        conn = self._get_conn()
+        try:
+            # 检查是否已存在
+            existing = conn.execute(
+                "SELECT id FROM extracted_content WHERE source_url=?",
+                (data["source_url"],),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    """UPDATE extracted_content
+                       SET title=?, author=?, platform=?, raw_content=?, tags=?, created_at=?
+                       WHERE source_url=?""",
+                    (
+                        data.get("title", ""),
+                        data.get("author", ""),
+                        data.get("platform", ""),
+                        data.get("raw_content", ""),
+                        data.get("tags", ""),
+                        now,
+                        data["source_url"],
+                    ),
+                )
+                conn.commit()
+                return existing[0]
+            else:
+                cursor = conn.execute(
+                    """INSERT INTO extracted_content
+                       (source_url, title, author, platform, raw_content, tags, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        data["source_url"],
+                        data.get("title", ""),
+                        data.get("author", ""),
+                        data.get("platform", ""),
+                        data.get("raw_content", ""),
+                        data.get("tags", ""),
+                        now,
+                    ),
+                )
+                conn.commit()
+                return cursor.lastrowid
+        finally:
+            conn.close()
+
+    def get_extracted(self, entry_id: int) -> Optional[dict]:
+        """读取单条提取内容。"""
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT * FROM extracted_content WHERE id=?", (entry_id,)
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def list_extracted(self, search: str = "", limit: int = 30) -> list[dict]:
+        """列出本地提取的内容。"""
+        conn = self._get_conn()
+        try:
+            if search:
+                rows = conn.execute(
+                    """SELECT * FROM extracted_content
+                       WHERE title LIKE ? OR tags LIKE ? OR platform LIKE ?
+                       ORDER BY created_at DESC LIMIT ?""",
+                    (f"%{search}%", f"%{search}%", f"%{search}%", limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM extracted_content ORDER BY created_at DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            return [dict(r) for r in rows]
         finally:
             conn.close()

@@ -1,5 +1,14 @@
-node_modules/
+.env
+CLAUDE.md
+ROADMAP.md
 __pycache__/
 *.pyc
-.env
 .venv/
+*.egg-info/
+dist/
+.pytest_cache/
+*.log
+.DS_Store
+data/
+用户手册.md
+scripts/generate_key.py

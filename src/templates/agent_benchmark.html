@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block title %}文案对标 — OmniCast{% endblock %}
+{% block content %}
+
+<div class="max-w-5xl mx-auto">
+    <div class="mb-5">
+        <h1 class="text-[16px] font-bold text-zinc-900 dark:text-zinc-200">文案对标</h1>
+        <p class="text-[12px] text-zinc-400 dark:text-zinc-500 mt-1">输入对标视频链接或参考文案，系统分析其 7 维写作技法，结合你的资料生成对标新文案。</p>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <!-- 左栏：输入区 -->
+        <div class="space-y-5">
+            <!-- Step 1: 参考文案 -->
+            <div class="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-2d p-5">
+                <h2 class="text-[14px] font-semibold text-zinc-900 dark:text-zinc-200 mb-3">Step 1: 参考文案</h2>
+
+                <!-- 方式 A: 粘贴链接 -->
+                <div class="mb-4">
+                    <label class="text-[11px] text-zinc-500 dark:text-zinc-400 mb-1.5 block">粘贴对标视频链接（自动提取文案）</label>
+                    <form hx-post="/api/agent/url-submit" hx-target="#url-status" hx-indicator="#url-submit-btn" hx-on::after-request="this.reset()">
+                        <input type="hidden" name="return_to" value="benchmark">
+                        <div class="flex gap-2">
+                            <div class="flex-1 flex items-center gap-2 px-3 py-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-transparent focus-within:border-zinc-300 dark:focus-within:border-zinc-600 focus-within:bg-white dark:focus-within:bg-zinc-900 transition-colors">
+                                <input type="text" name="url" placeholder="粘贴链接或抖音/小红书分享口令..." autocomplete="off"
+                                       class="flex-1 bg-transparent text-[13px] text-zinc-700 dark:text-zinc-300 placeholder-zinc-400 dark:placeholder-zinc-500 outline-none">
+                            </div>
+                            <button type="submit" id="url-submit-btn"
+                                    class="px-4 py-2 bg-zinc-900 dark:bg-white dark:text-zinc-900 text-white text-[12px] font-medium rounded-lg hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors disabled:opacity-50">
+                                提取文案
+                            </button>
+                        </div>
+                    </form>
+                    <div id="url-status" class="mt-2"></div>
+                </div>
+
+                <!-- 方式 B: 直接粘贴文案 -->
+                <div>
+                    <label class="text-[11px] text-zinc-500 dark:text-zinc-400 mb-1.5 block">或直接粘贴参考文案</label>
+                    <textarea id="reference-text" rows="6" placeholder="粘贴对标视频的文案全文..."
+                              class="w-full px-3 py-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-transparent focus:border-zinc-300 dark:focus-within:border-zinc-600 focus:bg-white dark:focus:bg-zinc-900 text-[13px] text-zinc-700 dark:text-zinc-300 placeholder-zinc-400 dark:placeholder-zinc-500 outline-none resize-y transition-colors"></textarea>
+                </div>
+
+                {% if entry and entry.get('title') %}
+                <!-- 已从链接提取的参考内容 -->
+                <div class="mt-3 p-3 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg border border-emerald-200 dark:border-emerald-800">
+                    <div class="text-[11px] text-emerald-600 dark:text-emerald-400 font-medium mb-1">已提取参考文案</div>
+                    <div class="text-[12px] text-zinc-700 dark:text-zinc-300 font-medium truncate">{{ entry.get('title', '')[:60] }}</div>
+                    <div class="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1 line-clamp-3">{{ entry.get('raw_content', entry.get('summary_markdown', ''))[:300] }}</div>
+                    <input type="hidden" id="ref-entry-id" value="{{ entry_id }}">
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Step 2: 你的资料 -->
+            <div class="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-2d p-5">
+                <h2 class="text-[14px] font-semibold text-zinc-900 dark:text-zinc-200 mb-3">Step 2: 你的资料</h2>
+                <textarea id="user-materials" rows="8" placeholder="粘贴你的品牌/产品介绍、核心卖点、目标受众、想要传达的信息...
+
+例如：
+- 品牌：XX 护肤品牌
+- 产品：抗老精华液
+- 核心卖点：3 天淡化细纹，医美级成分但温和不刺激
+- 目标受众：25-35 岁都市女性，关注抗初老
+- 品牌调性：专业但不冰冷，温暖但不说教"
+                          class="w-full px-3 py-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-transparent focus:border-zinc-300 dark:focus-within:border-zinc-600 focus:bg-white dark:focus:bg-zinc-900 text-[13px] text-zinc-700 dark:text-zinc-300 placeholder-zinc-400 dark:placeholder-zinc-500 outline-none resize-y transition-colors"></textarea>
+            </div>
+        </div>
+
+        <!-- 右栏：配置 + 生成 -->
+        <div class="space-y-5">
+            <!-- 目标平台 -->
+            <div class="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-2d p-5">
+                <h2 class="text-[14px] font-semibold text-zinc-900 dark:text-zinc-200 mb-3">Step 3: 目标平台 & 情绪</h2>
+
+                <label class="text-[11px] text-zinc-500 dark:text-zinc-400 mb-1.5 block">选择发布平台</label>
+                <div class="flex flex-wrap gap-2 mb-4" id="platform-select">
+                    {% for p in all_platforms %}
+                    {% set meta = platforms_meta.get(p, {}) %}
+                    <label class="cursor-pointer">
+                        <input type="checkbox" name="platform" value="{{ p }}" checked
+                               class="peer sr-only">
+                        <span class="inline-block px-3 py-1.5 text-[12px] rounded-lg border border-zinc-200 dark:border-zinc-700
+                                     bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400
+                                     peer-checked:bg-zinc-900 dark:peer-checked:bg-white
+                                     peer-checked:text-white dark:peer-checked:text-zinc-900
+                                     peer-checked:border-zinc-900 dark:peer-checked:border-white
+                                     hover:border-zinc-300 dark:hover:border-zinc-600 transition-colors">
+                            {{ meta.get('icon', '') }} {{ meta.get('name', p) }}
+                        </span>
+                    </label>
+                    {% endfor %}
+                </div>
+
+                <label class="text-[11px] text-zinc-500 dark:text-zinc-400 mb-1.5 block">情绪基调</label>
+                <div class="flex flex-wrap gap-2" id="emotion-select">
+                    {% for key, em in emotions.items() %}
+                    <label class="cursor-pointer">
+                        <input type="radio" name="tone_variant" value="{{ key }}"
+                               {% if key == 'passionate' %}checked{% endif %}
+                               class="peer sr-only">
+                        <span class="inline-block px-3 py-1.5 text-[12px] rounded-lg border border-zinc-200 dark:border-zinc-700
+                                     bg-white dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400
+                                     peer-checked:bg-zinc-900 dark:peer-checked:bg-white
+                                     peer-checked:text-white dark:peer-checked:text-zinc-900
+                                     peer-checked:border-zinc-900 dark:peer-checked:border-white
+                                     hover:border-zinc-300 dark:hover:border-zinc-600 transition-colors">
+                            {{ em.get('label', key) }}
+                        </span>
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- 生成按钮 + 结果 -->
+            <div class="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-2d p-5">
+                <button id="benchmark-btn" onclick="startBenchmark()"
+                        class="w-full px-4 py-3 bg-zinc-900 dark:bg-white dark:text-zinc-900 text-white text-[14px] font-medium rounded-lg hover:bg-zinc-800 dark:hover:bg-zinc-200 transition-colors disabled:opacity-50">
+                    开始对标创作
+                </button>
+                <p class="text-[10px] text-zinc-400 dark:text-zinc-500 mt-2 text-center">将进行两步：① 7 维技法分析 ② 对标创作</p>
+
+                <div id="gen-result" class="mt-4"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function startBenchmark() {
+    var btn = document.getElementById('benchmark-btn');
+    var resultDiv = document.getElementById('gen-result');
+
+    // 收集参考文案
+    var refEntryId = document.getElementById('ref-entry-id');
+    var refText = document.getElementById('reference-text').value.trim();
+    var referenceEntryId = refEntryId ? refEntryId.value : '';
+
+    if (!referenceEntryId && !refText) {
+        resultDiv.innerHTML = '<div class="text-[13px] text-red-500">请先粘贴对标视频链接并提取文案，或直接粘贴参考文案</div>';
+        return;
+    }
+
+    // 收集用户资料
+    var userMaterials = document.getElementById('user-materials').value.trim();
+    if (!userMaterials) {
+        resultDiv.innerHTML = '<div class="text-[13px] text-red-500">请在 Step 2 中输入你的资料</div>';
+        return;
+    }
+
+    // 收集平台和情绪
+    var platforms = [];
+    document.querySelectorAll('#platform-select input[type=checkbox]:checked').forEach(function(cb) {
+        platforms.push(cb.value);
+    });
+    if (platforms.length === 0) platforms = ['douyin'];
+
+    var tone = 'passionate';
+    var checkedEmotion = document.querySelector('#emotion-select input[type=radio]:checked');
+    if (checkedEmotion) tone = checkedEmotion.value;
+
+    // 显示加载
+    btn.disabled = true;
+    btn.textContent = '正在对标创作…';
+
+    // 用 HTMX 发起请求（自动处理响应中的 HTMX 属性）
+    htmx.ajax('POST', '/api/agent/benchmark', {
+        target: '#gen-result',
+        swap: 'innerHTML',
+        values: {
+            reference_entry_id: referenceEntryId,
+            reference_text: refText,
+            user_materials: userMaterials,
+            tone_variant: tone,
+            platforms: platforms
+        }
+    });
+    // 恢复按钮（异步，请求发出后即可恢复）
+    setTimeout(function() {
+        btn.disabled = false;
+        btn.textContent = '重新对标创作';
+    }, 1000);
+}
+</script>
+
+{% endblock %}

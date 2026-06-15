@@ -1,0 +1,23 @@
+{# HTMX 片段：对标页提取完成 — 不跳转，不重复展示，只填入 textarea #}
+<div class="flex items-center gap-2 text-[13px] text-emerald-600 dark:text-emerald-400">
+    <span>✅ 文案提取完成（共 {{ char_count }} 字）</span>
+    <span class="text-[11px] text-zinc-400">{{ platform or '' }} {% if author %}@{{ author }}{% endif %}</span>
+</div>
+
+<script>
+// 把完整原文填入参考文案区
+var refTextarea = document.getElementById('reference-text');
+if (refTextarea) {
+    refTextarea.value = {{ raw_content_json | safe if raw_content_json else '""' }};
+}
+
+// 设置隐藏的 entry_id
+var refInput = document.getElementById('ref-entry-id');
+if (!refInput) {
+    refInput = document.createElement('input');
+    refInput.type = 'hidden';
+    refInput.id = 'ref-entry-id';
+    document.getElementById('benchmark-btn').parentElement.appendChild(refInput);
+}
+refInput.value = '{{ entry_id }}';
+</script>

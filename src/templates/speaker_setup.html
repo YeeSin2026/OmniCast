@@ -174,6 +174,90 @@
             生成一篇口播文案，然后点击「生成口播音频」试试效果吧。
         </p>
     </div>
+
+    <!-- ── 自由文本转语音 ── -->
+    <div class="mt-5 bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-2d p-6">
+        <div class="flex items-center justify-between mb-4">
+            <div>
+                <h2 class="text-[15px] font-semibold text-zinc-800 dark:text-zinc-200">📄 自由文本转语音</h2>
+                <p class="text-[12px] text-zinc-500 dark:text-zinc-400 mt-0.5">
+                    上传自己的文档或粘贴文本，直接用你的克隆声音生成音频
+                </p>
+            </div>
+        </div>
+
+        <form id="speaker-tts-form"
+              hx-post="/api/agent/speaker/tts"
+              hx-target="#speaker-tts-status"
+              hx-swap="innerHTML"
+              hx-indicator="#speaker-tts-btn"
+              hx-on:htmx:before-request="document.getElementById('speaker-tts-status').innerHTML='<div class=\'flex items-center gap-2\'><span class=\'inline-block w-4 h-4 border-2 border-zinc-300 dark:border-zinc-600 border-t-zinc-500 dark:border-t-zinc-400 rounded-full animate-spin\'></span><span class=\'text-[13px] text-zinc-500 dark:text-zinc-400\'>正在连接 TTS 服务…</span></div>'">
+
+            <!-- 文本输入区 -->
+            <div class="mb-4">
+                <div class="flex items-center justify-between mb-2">
+                    <label class="text-[12px] font-medium text-zinc-600 dark:text-zinc-400">
+                        输入文本（直接粘贴或上传文件）
+                    </label>
+                    <span class="text-[10px] text-zinc-400" id="speaker-char-count">0 字</span>
+                </div>
+                <textarea name="text_content" id="speaker-text-input" rows="6"
+                          placeholder="在这里粘贴你的文案…&#10;&#10;例如：大家好，欢迎来到我的频道。今天我们来聊聊 AI 如何改变内容创作的方式…"
+                          oninput="document.getElementById('speaker-char-count').textContent = this.value.length + ' 字'"
+                          class="w-full px-3 py-3 rounded-lg bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700
+                                 text-[13px] text-zinc-700 dark:text-zinc-300 placeholder:text-zinc-400
+                                 focus:outline-none focus:border-zinc-400 dark:focus:border-zinc-600 transition-colors resize-y"></textarea>
+            </div>
+
+            <!-- 文件上传 -->
+            <div class="mb-5">
+                <label class="block text-[12px] font-medium text-zinc-600 dark:text-zinc-400 mb-2">
+                    或上传文档（.txt / .md，UTF-8 编码）
+                </label>
+                <div class="flex items-center gap-3">
+                    <input type="file" name="text_file" id="speaker-file-input"
+                           accept=".txt,.md,.text,.markdown"
+                           onchange="handleSpeakerFileSelect(event)"
+                           class="text-[12px] text-zinc-500 dark:text-zinc-400
+                                  file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0
+                                  file:text-[12px] file:font-medium
+                                  file:bg-zinc-100 dark:file:bg-zinc-800
+                                  file:text-zinc-700 dark:file:text-zinc-300
+                                  hover:file:bg-zinc-200 dark:hover:file:bg-zinc-700
+                                  file:transition-colors file:cursor-pointer flex-1">
+                    <span id="speaker-file-name" class="text-[11px] text-zinc-400 hidden"></span>
+                </div>
+                <p class="text-[11px] text-zinc-400 mt-2">
+                    💡 上传文件后会自动读取内容到上方文本框，可编辑后再生成。单次最多 2000 字。
+                </p>
+            </div>
+
+            <!-- 生成按钮 -->
+            <button type="submit" id="speaker-tts-btn"
+                    class="w-full py-2.5 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900
+                           text-[13px] font-medium rounded-lg hover:opacity-90 transition-opacity
+                           disabled:opacity-50">
+                <span class="htmx-hide-when-request">🎤 生成口播音频</span>
+                <span class="htmx-indicator">
+                    <span class="inline-block w-4 h-4 border-2 border-white/30 border-t-white dark:border-zinc-400/30 dark:border-t-zinc-600 rounded-full animate-spin mr-2"></span>
+                    正在准备…
+                </span>
+            </button>
+        </form>
+
+        <!-- TTS 状态（HTMX 替换此区域） -->
+        <div id="speaker-tts-status" class="mt-4"></div>
+    </div>
+
+    {% else %}
+    <div class="mt-5 bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-2d p-6">
+        <div class="text-center py-4">
+            <h2 class="text-[15px] font-semibold text-zinc-400 dark:text-zinc-500 mb-2">📄 自由文本转语音</h2>
+            <p class="text-[13px] text-zinc-400 dark:text-zinc-500">
+                上传声音样本后，即可在此上传自己的文档来生成口播音频。
+            </p>
+        </div>
+    </div>
     {% endif %}
 </div>
 
@@ -299,6 +383,35 @@ function retryRecording() {
     document.getElementById('record-preview').classList.add('hidden');
     document.getElementById('btn-record-text').textContent = '开始录制';
     document.getElementById('record-hint').textContent = '点击「开始录制」后对着麦克风说话，建议 15-60 秒';
+}
+
+// ═══════════════════════════════════════════
+//  自由文本 TTS — 文件读取
+// ═══════════════════════════════════════════
+function handleSpeakerFileSelect(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const nameEl = document.getElementById('speaker-file-name');
+    nameEl.textContent = file.name;
+    nameEl.classList.remove('hidden');
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const text = e.target.result;
+        const textarea = document.getElementById('speaker-text-input');
+        // 如果文本框已有内容，追加；否则替换
+        if (textarea.value.trim()) {
+            textarea.value += '\n\n' + text;
+        } else {
+            textarea.value = text;
+        }
+        document.getElementById('speaker-char-count').textContent = textarea.value.length + ' 字';
+    };
+    reader.onerror = function() {
+        alert('读取文件失败，请检查文件是否有效');
+    };
+    reader.readAsText(file, 'UTF-8');
 }
 
 async function saveRecording() {

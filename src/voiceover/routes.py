@@ -292,7 +292,7 @@ def register_routes(app, jinja_env, render_func):
                 f'class="text-[11px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 underline">'
                 f'重新生成</button>'
                 f'<button hx-delete="/api/agent/draft/{draft_id}/audio" '
-                f'hx-target="#tts-status" hx-swap="outerHTML" '
+                f'hx-target="#tts-section" hx-swap="outerHTML" '
                 f'hx-confirm="确定删除这条口播音频吗？" '
                 f'class="text-[11px] text-red-400 hover:text-red-500 dark:text-red-500 dark:hover:text-red-400 underline">'
                 f'删除</button>'
@@ -426,7 +426,161 @@ def register_routes(app, jinja_env, render_func):
             draft_text_len=len(draft.get("content_text", "")),
         ))
 
-    logger.info("VoiceOver 路由已注册（6 个端点）")
+    # ═══════════════════════════════════════════
+    #  自由文本转语音（上传文档 / 粘贴文本）
+    # ═══════════════════════════════════════════
+
+    @app.post("/api/agent/speaker/tts")
+    async def speaker_tts(
+        text_content: str = Form(""),
+        text_file: UploadFile | None = None,
+    ):
+        """自由文本转语音 — 上传 txt/md 文档或粘贴文本，用克隆声音生成音频。
+
+        不依赖 OmniCast 草稿，用户可以用自己的文案生成口播音频。
+        """
+        # 获取文本内容
+        text = text_content.strip()
+
+        if text_file and text_file.filename:
+            # 校验文件类型
+            suffix = os.path.splitext(text_file.filename)[1].lower()
+            if suffix not in (".txt", ".md", ".text", ".markdown"):
+                return HTMLResponse(
+                    '<div class="text-red-500 dark:text-red-400 text-[13px]">'
+                    f'不支持的格式 "{suffix}"，请上传 .txt 或 .md 文件</div>'
+                )
+            try:
+                file_bytes = await text_file.read()
+                # 尝试 UTF-8 解码
+                file_text = file_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                try:
+                    file_text = file_bytes.decode("gbk")
+                except Exception:
+                    return HTMLResponse(
+                        '<div class="text-red-500 dark:text-red-400 text-[13px]">'
+                        '文件编码无法识别，请使用 UTF-8 编码的文本文件</div>'
+                    )
+            if not text:
+                text = file_text.strip()
+
+        if not text or len(text) < 5:
+            return HTMLResponse(
+                '<div class="text-red-500 dark:text-red-400 text-[13px]">'
+                '文本内容过短（少于 5 字符），无法生成音频</div>'
+            )
+
+        if not speaker_mgr.has_reference_audio():
+            return HTMLResponse(
+                '<div class="text-red-500 dark:text-red-400 text-[13px]">'
+                '尚未配置声音样本，请先上传你的录音。</div>'
+            )
+
+        # 清洗文本
+        clean_text = _sanitize_for_tts(text, max_chars=2000)
+
+        job_id = uuid.uuid4().hex[:12]
+        _JOBS[job_id] = {
+            "status": "pending",
+            "result": {},
+            "text_len": len(clean_text),
+        }
+
+        thread = threading.Thread(
+            target=_run_speaker_tts,
+            args=(job_id, clean_text),
+            daemon=True,
+        )
+        thread.start()
+
+        logger.info("自由文本 TTS 任务已启动: job=%s text_len=%d", job_id, len(clean_text))
+
+        return HTMLResponse(
+            f'<div id="speaker-tts-status" hx-get="/api/agent/speaker/tts/status/{job_id}" '
+            f'hx-trigger="every 2s" hx-swap="outerHTML">'
+            f'<div class="flex items-center gap-2">'
+            f'<span class="inline-block w-4 h-4 border-2 border-zinc-300 dark:border-zinc-600 '
+            f'border-t-zinc-500 dark:border-t-zinc-400 rounded-full animate-spin"></span>'
+            f'<span class="text-[13px] text-zinc-500 dark:text-zinc-400">'
+            f'正在生成口播音频…（{len(clean_text)} 字）</span>'
+            f'</div></div>'
+        )
+
+    @app.get("/api/agent/speaker/tts/status/{job_id}")
+    async def speaker_tts_status(job_id: str):
+        """轮询自由文本 TTS 任务状态。"""
+        job = _JOBS.get(job_id)
+        if not job:
+            return HTMLResponse(
+                '<div id="speaker-tts-status" class="text-red-500 dark:text-red-400 text-[13px]">'
+                '任务已过期或未找到</div>'
+            )
+
+        if job["status"] == "done":
+            audio_filename = job["result"].get("audio_filename", "")
+            duration = job["result"].get("duration_sec", 0)
+            out_path = job["result"].get("audio_path", "")
+
+            if not audio_filename:
+                return HTMLResponse(
+                    '<div id="speaker-tts-status" class="text-red-500 dark:text-red-400 text-[13px]">'
+                    '音频生成异常</div>'
+                )
+
+            return HTMLResponse(
+                f'<div id="speaker-tts-status" class="space-y-3">'
+                f'<audio controls preload="metadata" class="h-10 w-full max-w-[400px]">'
+                f'<source src="/api/agent/speaker/audio/{audio_filename}" type="audio/wav">'
+                f'</audio>'
+                f'<div class="flex items-center gap-3 flex-wrap">'
+                f'<span class="text-[11px] text-emerald-600 dark:text-emerald-400">'
+                f'口播音频已生成 · {duration:.0f}秒</span>'
+                f'<a href="/api/agent/speaker/audio/{audio_filename}" download '
+                f'class="text-[11px] px-3 py-1.5 bg-zinc-100 dark:bg-zinc-800 text-zinc-500 '
+                f'dark:text-zinc-400 rounded-lg hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors">'
+                f'📥 下载音频</a>'
+                f'</div>'
+                f'</div>'
+            )
+
+        elif job["status"] == "failed":
+            error = job["result"].get("error", "未知错误")
+            return HTMLResponse(
+                f'<div id="speaker-tts-status" class="text-red-500 dark:text-red-400 text-[13px]">'
+                f'音频生成失败: {error[:300]}</div>'
+            )
+
+        else:
+            text_len = job.get("text_len", 0)
+            return HTMLResponse(
+                f'<div id="speaker-tts-status" hx-get="/api/agent/speaker/tts/status/{job_id}" '
+                f'hx-trigger="every 2s" hx-swap="outerHTML">'
+                f'<div class="flex items-center gap-2">'
+                f'<span class="inline-block w-4 h-4 border-2 border-zinc-300 dark:border-zinc-600 '
+                f'border-t-zinc-500 dark:border-t-zinc-400 rounded-full animate-spin"></span>'
+                f'<span class="text-[13px] text-zinc-500 dark:text-zinc-400">'
+                f'正在生成口播音频…{f"（{text_len} 字）" if text_len else ""}</span>'
+                f'</div></div>'
+            )
+
+    @app.get("/api/agent/speaker/audio/{filename}")
+    async def serve_speaker_audio(filename: str):
+        """提供自由文本 TTS 生成的音频文件。"""
+        if ".." in filename or "/" in filename or "\\" in filename:
+            raise HTTPException(400, "文件名不合法")
+
+        filepath = os.path.join(config.AUDIO_OUTPUT_DIR, filename)
+        if not os.path.exists(filepath):
+            raise HTTPException(404, "音频文件未找到，可能已被清理")
+
+        return FileResponse(
+            filepath,
+            media_type="audio/wav",
+            headers={"Accept-Ranges": "bytes"},
+        )
+
+    logger.info("VoiceOver 路由已注册（10 个端点）")
 
 
 # ═══════════════════════════════════════════
@@ -521,6 +675,64 @@ def _run_tts_synthesis(job_id: str, draft_id: int, content_text: str):
 
     except Exception as e:
         logger.error("TTS job=%s 失败: %s", job_id, e, exc_info=True)
+        _JOBS[job_id] = {
+            "status": "failed",
+            "result": {"error": str(e)[:500]},
+        }
+    finally:
+        loop.close()
+
+
+def _run_speaker_tts(job_id: str, clean_text: str):
+    """自由文本 TTS 后台任务 — 与草稿无关，直接合成音频。"""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        wav_path = speaker_mgr.get_reference_wav_path()
+        prompt_text = speaker_mgr.get_prompt_text()
+
+        if not wav_path:
+            raise RuntimeError("参考音频未配置")
+
+        logger.info("自由文本 TTS job=%s: 开始合成 (%d 字)", job_id, len(clean_text))
+
+        wav_data = loop.run_until_complete(
+            tts_client.synthesize_speech(
+                tts_text=clean_text,
+                prompt_text=prompt_text,
+                prompt_wav_path=wav_path,
+            )
+        )
+
+        if not wav_data or len(wav_data) < 500:
+            raise RuntimeError(
+                f"VoxCPM 返回音频异常: {len(wav_data) if wav_data else 0} bytes"
+            )
+
+        # 保存到磁盘
+        os.makedirs(config.AUDIO_OUTPUT_DIR, exist_ok=True)
+        out_filename = f"speaker_{uuid.uuid4().hex[:8]}.wav"
+        out_path = os.path.join(config.AUDIO_OUTPUT_DIR, out_filename)
+        with open(out_path, "wb") as f:
+            f.write(wav_data)
+
+        duration = len(wav_data) / 88200
+        logger.info(
+            "自由文本 TTS job=%s: 音频已保存 %s (~%.1fs, %d bytes)",
+            job_id, out_path, duration, len(wav_data),
+        )
+
+        _JOBS[job_id] = {
+            "status": "done",
+            "result": {
+                "audio_filename": out_filename,
+                "audio_path": out_path,
+                "duration_sec": duration,
+            },
+        }
+
+    except Exception as e:
+        logger.error("自由文本 TTS job=%s 失败: %s", job_id, e, exc_info=True)
         _JOBS[job_id] = {
             "status": "failed",
             "result": {"error": str(e)[:500]},

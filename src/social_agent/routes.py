@@ -19,13 +19,43 @@ logger = logging.getLogger(__name__)
 # 简单的内存 job 跟踪
 _JOBS: dict[str, dict] = {}
 
+# ── 关联知识缓存（按 entry_id → 渲染后的 HTML），持久化到文件 ──
+import os as _os
+_RANKING_CACHE: dict[int, str] = {}
+_RANKING_CACHE_FILE = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(__file__))), 'data', 'ranking_cache.json')
+
+
+def _load_ranking_cache():
+    """启动时从文件恢复缓存。"""
+    global _RANKING_CACHE
+    try:
+        if _os.path.exists(_RANKING_CACHE_FILE):
+            import json as _json
+            with open(_RANKING_CACHE_FILE) as f:
+                raw = _json.load(f)
+                _RANKING_CACHE = {int(k): v for k, v in raw.items()}
+            logger.info("关联知识缓存已恢复: %d 条", len(_RANKING_CACHE))
+    except Exception:
+        pass
+
+
+def _save_ranking_cache():
+    """缓存更新后写文件。"""
+    try:
+        import json as _json
+        _os.makedirs(_os.path.dirname(_RANKING_CACHE_FILE), exist_ok=True)
+        with open(_RANKING_CACHE_FILE, 'w') as f:
+            _json.dump(_RANKING_CACHE, f, ensure_ascii=False)
+    except Exception:
+        pass
+
 
 def register_routes(app, jinja_env, render_func):
     from .store import DraftStore
     from .generator import generate_for_platforms, generate_for_platforms_v2
     from .resolver import KnowledgeResolver
     from .scorer import score_and_predict, score_title, score_tags
-    from .prompts import ALL_PLATFORMS, PLATFORM_META
+    from .prompts import ALL_PLATFORMS, PLATFORM_META, ALL_EMOTIONS, EMOTIONS
 
     draft_store = DraftStore()
 
@@ -65,9 +95,20 @@ def register_routes(app, jinja_env, render_func):
             existing_platforms=existing_platforms,
         ))
 
+    # ── 启动时恢复持久化缓存 ──
+    _load_ranking_cache()
+
     @app.get("/api/agent/generate/{entry_id}/ranking", response_class=HTMLResponse)
-    async def agent_generate_ranking(entry_id: int):
-        """HTMX 懒加载：显示 AI 为这个条目选择的关联知识及理由。"""
+    async def agent_generate_ranking(entry_id: int, force: int = Query(0)):
+        """HTMX 懒加载：显示 AI 为这个条目选择的关联知识及理由。
+
+        结果缓存到内存 + 文件，重启后仍有效。
+        force=1: 强制重新分析（用户手动点击"重新关联"）
+        """
+        # 缓存命中（非强制模式）
+        if not force and entry_id in _RANKING_CACHE:
+            return HTMLResponse(_RANKING_CACHE[entry_id])
+
         entry = await connector.get_entry(entry_id)
         if not entry:
             return HTMLResponse('<div class="text-[13px] text-zinc-400">条目未找到</div>')
@@ -80,15 +121,34 @@ def register_routes(app, jinja_env, render_func):
         )
         reasons = bundle.ranking_reasons
         if not reasons:
-            return HTMLResponse(
+            html = (
                 '<div class="text-[13px] text-zinc-400 dark:text-zinc-500 py-3">'
                 '未找到高度关联的知识条目</div>'
             )
+            _RANKING_CACHE[entry_id] = html
+            _save_ranking_cache()
+            return HTMLResponse(html)
 
+        html = render_func("ranking_reasons.html", reasons=reasons, entry_id=entry_id)
+        _RANKING_CACHE[entry_id] = html
+        _save_ranking_cache()
+        return HTMLResponse(html)
+
+    @app.get("/agent/benchmark", response_class=HTMLResponse)
+    async def agent_benchmark_page(request: Request, entry_id: int = Query(0)):
+        """文案对标页面 — 可传入已提取的参考条目 ID。"""
+        entry = None
+        if entry_id:
+            entry = await connector.get_entry(entry_id)
         return HTMLResponse(render_func(
-            "ranking_reasons.html",
-            reasons=reasons,
+            "agent_benchmark.html",
+            request=request,
+            entry=entry,
             entry_id=entry_id,
+            all_platforms=ALL_PLATFORMS,
+            platforms_meta=PLATFORM_META,
+            all_emotions=ALL_EMOTIONS,
+            emotions=EMOTIONS,
         ))
 
     @app.get("/agent/generate-multi", response_class=HTMLResponse)
@@ -277,16 +337,45 @@ def register_routes(app, jinja_env, render_func):
             drafts = job["result"].get("drafts", {})
             mode = job["result"].get("mode", "")
             coverage = job["result"].get("coverage", "")
+            bundle = job.get("bundle")
             html = ""
-            # v2 模式指示器
+            # v2 模式 & 覆盖度指示器
             if mode:
                 mode_badge = {
                     "knowledge-rich": "🧠 知识驱动",
                     "style-driven": "🎨 风格驱动",
                 }.get(mode, mode)
                 html += f'<div class="text-[11px] text-zinc-400 mb-2">模式: {mode_badge} · 覆盖度: {coverage}</div>'
+            # 知识来源详情
+            if bundle:
+                html += f'<div class="text-[11px] text-zinc-400 mb-2">wiki:{len(bundle.wiki_pages)}页 · rag:{len(bundle.rag_results)}条 · 关联:{len(bundle.related_entries_full)}条</div>'
             if errors:
                 html += '<div class="text-[13px] text-amber-600 dark:text-amber-400 mb-2">' + "<br>".join(errors) + "</div>"
+            # 对标分析结果展示
+            analysis = job.get("analysis")
+            if analysis:
+                dims = analysis.get("dimensions", {})
+                if dims:
+                    dim_labels = {"HP": "钩子", "ER": "情感", "SR": "共振", "QL": "金句", "NA": "叙事", "AB": "受众", "TS": "分享"}
+                    dim_rows = []
+                    for key, label in dim_labels.items():
+                        d = dims.get(key, {})
+                        score = d.get("score", "?")
+                        technique = d.get("technique", "")[:40]
+                        dim_rows.append(
+                            f'<div class="flex items-center gap-2 text-[11px]">'
+                            f'<span class="text-zinc-400 w-8">{label}</span>'
+                            f'<span class="font-mono text-zinc-600 dark:text-zinc-300">{score}/5</span>'
+                            f'<span class="text-zinc-400 truncate">{technique}</span>'
+                            f'</div>'
+                        )
+                    html += (
+                        f'<div class="mb-3 p-3 bg-zinc-50 dark:bg-zinc-800/50 rounded-lg">'
+                        f'<div class="text-[12px] font-medium text-zinc-600 dark:text-zinc-300 mb-1.5">'
+                        f'📊 参考文案 7 维分析 · 综合 {analysis.get("overall_score", "?")}/5 · {analysis.get("domain", "")}</div>'
+                        f'{"".join(dim_rows)}'
+                        f'</div>'
+                    )
             if drafts:
                 links = []
                 for platform, draft_id in drafts.items():
@@ -298,18 +387,30 @@ def register_routes(app, jinja_env, render_func):
                         f'hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors mr-2 mb-2">'
                         f'{meta.get("icon","")} {meta.get("name", platform)} 草稿 #{draft_id}</a>'
                     )
-                html += f'<div class="text-[13px] text-emerald-600 dark:text-emerald-400 mb-2">生成完成！共 {len(drafts)} 个平台</div>' + "".join(links)
+                html += f'<div class="text-[13px] text-emerald-600 dark:text-emerald-400 mb-2">✅ 对标生成完成！共 {len(drafts)} 个平台</div>' + "".join(links)
             return HTMLResponse(html or "生成完成，但无结果")
         elif job["status"] == "failed":
             error = job["result"].get("error", "生成失败")
             return HTMLResponse(f'<div class="text-[13px] text-red-500 dark:text-red-400">❌ {error[:200]}</div>')
         else:
+            # 根据阶段显示不同的提示文案
+            phase = job.get("phase", "generating")
+            phase_messages = {
+                "preparing": "正在连接知识库，准备分析…",
+                "resolving": "🧠 正在分析知识关联，连接 LLM 中…",
+                "generating": "✍️ 正在生成社媒内容，LLM 创作中…",
+                "analyzing": "🔍 正在 7 维拆解参考文案的写作技法…",
+                "processing": "📡 正在抓取页面内容，提取文案中…",
+                "deep_extracting": "⛏️ 正在深度采集视频完整文案（字幕/口播）…",
+            }
+            msg = phase_messages.get(phase, "正在生成中，请稍候…")
             return HTMLResponse(
                 f'<div id="gen-poll" hx-get="/api/agent/generate/status/{job_id}" '
                 f'hx-trigger="every 2s" hx-swap="outerHTML">'
-                f'<span class="text-[13px] text-zinc-500 dark:text-zinc-400">'
-                f'<span class="inline-block w-4 h-4 border-2 border-zinc-300 dark:border-zinc-600 border-t-zinc-500 dark:border-t-zinc-400 rounded-full animate-spin mr-2 align-middle"></span>'
-                f'正在生成中，请稍候…</span></div>'
+                f'<div class="flex items-center gap-2">'
+                f'<span class="inline-block w-4 h-4 border-2 border-zinc-300 dark:border-zinc-600 border-t-zinc-500 dark:border-t-zinc-400 rounded-full animate-spin"></span>'
+                f'<span class="text-[13px] text-zinc-500 dark:text-zinc-400">{msg}</span>'
+                f'</div></div>'
             )
 
     # ═══════════════════════════════════════════
@@ -327,9 +428,9 @@ def register_routes(app, jinja_env, render_func):
         generate_title: bool = Form(False),
         generate_tags: bool = Form(False),
     ):
-        """v2 生成 — 先解析知识上下文，再生成内容。
+        """v2 生成 — 立即返回轮询片段，解析+生成在后台线程中执行。
 
-        流程：KnowledgeResolver → ContextBundle → generate_for_platforms_v2
+        避免同步等待 KnowledgeResolver（含 LLM 调用）导致客户端无反馈。
         """
         entry = await connector.get_entry(knowledge_id)
         if not entry:
@@ -344,59 +445,31 @@ def register_routes(app, jinja_env, render_func):
         # 用条目标题作为话题
         search_topic = topic or entry.get("title", "")
 
-        # Step 1: 解析知识上下文
-        resolver = KnowledgeResolver()
-        bundle = await resolver.resolve(
-            topic=search_topic,
-            entry_id=knowledge_id,
-            platform=platform_list[0] if len(platform_list) == 1 else "",
-            max_related=max_related,
-        )
-
-        # 按用户勾选的 selected_ids 过滤关联条目
-        if selected_ids:
-            keep_ids = set()
-            for part in selected_ids.split(","):
-                part = part.strip()
-                if part.isdigit():
-                    keep_ids.add(int(part))
-            if keep_ids:
-                bundle.related_entries_full = [
-                    e for e in bundle.related_entries_full
-                    if e.get("id") in keep_ids
-                ]
-                logger.info("用户勾选过滤: 保留 %d/%d 条", len(bundle.related_entries_full), len(keep_ids))
-
-        # Step 2: 生成（在后台线程中运行异步任务）
+        # 校验 knowledge_id 存在性后立即创建 job，所有耗时操作在后台线程完成
         job_id = uuid.uuid4().hex[:12]
         _JOBS[job_id] = {
             "status": "pending",
+            "phase": "preparing",
             "result": {},
-            "bundle": bundle,  # 保存 bundle 供状态查询使用
         }
 
         thread = threading.Thread(
-            target=_run_generation_v2,
-            args=(job_id, bundle, platform_list, tone_variant, knowledge_id, generate_title, generate_tags),
+            target=_run_generation_v2_full,
+            args=(job_id, search_topic, knowledge_id, None, platform_list,
+                  tone_variant, generate_title, generate_tags, max_related,
+                  platform_list[0] if len(platform_list) == 1 else "",
+                  selected_ids),
             daemon=True,
         )
         thread.start()
 
-        # 返回轮询片段（含覆盖度信息）
-        coverage_badge = {
-            "high": '<span class="text-[11px] px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">知识覆盖: 高</span>',
-            "medium": '<span class="text-[11px] px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">知识覆盖: 中</span>',
-            "low": '<span class="text-[11px] px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-400">风格驱动模式</span>',
-        }.get(bundle.coverage, "")
-
         return HTMLResponse(
             f'<div id="gen-poll" hx-get="/api/agent/generate/status/{job_id}" '
             f'hx-trigger="every 2s" hx-swap="outerHTML">'
-            f'<div class="flex items-center gap-3 mb-2">{coverage_badge}'
-            f'<span class="text-[11px] text-zinc-400">{bundle.mode} · wiki:{len(bundle.wiki_pages)}页 · rag:{len(bundle.rag_results)}条</span></div>'
-            f'<span class="text-[13px] text-zinc-500 dark:text-zinc-400">'
-            f'<span class="inline-block w-4 h-4 border-2 border-zinc-300 dark:border-zinc-600 border-t-zinc-500 dark:border-t-zinc-400 rounded-full animate-spin mr-2 align-middle"></span>'
-            f'正在生成中，请稍候…</span></div>'
+            f'<div class="flex items-center gap-2">'
+            f'<span class="inline-block w-4 h-4 border-2 border-zinc-300 dark:border-zinc-600 border-t-zinc-500 dark:border-t-zinc-400 rounded-full animate-spin"></span>'
+            f'<span class="text-[13px] text-zinc-500 dark:text-zinc-400">正在连接知识库，准备生成…</span>'
+            f'</div></div>'
         )
 
     @app.post("/api/agent/generate-multi")
@@ -409,7 +482,7 @@ def register_routes(app, jinja_env, render_func):
         generate_title: bool = Form(False),
         generate_tags: bool = Form(False),
     ):
-        """多条目合并生成 — 用户手动选择了多条知识条目一起创作。"""
+        """多条目合并生成 — 立即返回轮询片段，解析+生成在后台线程中执行。"""
         # 解析 ID 列表
         id_list = []
         for part in knowledge_ids.split(","):
@@ -430,40 +503,95 @@ def register_routes(app, jinja_env, render_func):
         first_entry = await connector.get_entry(id_list[0])
         search_topic = topic or (first_entry.get("title", "") if first_entry else "")
 
-        # 解析知识上下文（传入多个 entry_id）
-        resolver = KnowledgeResolver()
-        bundle = await resolver.resolve(
-            topic=search_topic,
-            entry_ids=id_list,
-            platform=platform_list[0] if len(platform_list) == 1 else "",
-            max_related=max_related,
-        )
-
-        # 后台生成
+        # 创建 job 后立即返回，所有耗时操作在后台线程完成
         job_id = uuid.uuid4().hex[:12]
-        _JOBS[job_id] = {"status": "pending", "result": {}, "bundle": bundle}
+        _JOBS[job_id] = {
+            "status": "pending",
+            "phase": "preparing",
+            "result": {},
+        }
 
         thread = threading.Thread(
-            target=_run_generation_v2,
-            args=(job_id, bundle, platform_list, tone_variant, id_list[0], generate_title, generate_tags),
+            target=_run_generation_v2_full,
+            args=(job_id, search_topic, id_list[0], id_list, platform_list,
+                  tone_variant, generate_title, generate_tags, max_related,
+                  platform_list[0] if len(platform_list) == 1 else "",
+                  ""),  # selected_ids 在 multi 模式下不适用
             daemon=True,
         )
         thread.start()
 
-        coverage_badge = {
-            "high": '<span class="text-[11px] px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">知识覆盖: 高</span>',
-            "medium": '<span class="text-[11px] px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">知识覆盖: 中</span>',
-            "low": '<span class="text-[11px] px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-400">风格驱动模式</span>',
-        }.get(bundle.coverage, "")
+        return HTMLResponse(
+            f'<div id="gen-poll" hx-get="/api/agent/generate/status/{job_id}" '
+            f'hx-trigger="every 2s" hx-swap="outerHTML">'
+            f'<div class="flex items-center gap-2">'
+            f'<span class="inline-block w-4 h-4 border-2 border-zinc-300 dark:border-zinc-600 border-t-zinc-500 dark:border-t-zinc-400 rounded-full animate-spin"></span>'
+            f'<span class="text-[13px] text-zinc-500 dark:text-zinc-400">正在连接知识库，准备生成…</span>'
+            f'</div></div>'
+        )
+
+    # ═══════════════════════════════════════════
+    #  文案对标 API
+    # ═══════════════════════════════════════════
+
+    @app.post("/api/agent/benchmark")
+    async def api_agent_benchmark(
+        request: Request,
+        reference_entry_id: int = Form(0),
+        reference_text: str = Form(""),
+        user_materials: str = Form(...),
+        tone_variant: str = Form("passionate"),
+    ):
+        """文案对标生成 — 分析参考文案后对标创作。
+
+        两种输入方式：
+        1. reference_entry_id: 从 OmniVault 获取已提取的参考条目
+        2. reference_text: 直接粘贴参考文案
+        """
+        # 获取参考文案（优先取原始文案 raw_content，AI总结不含写作技法）
+        reference_content = ""
+        if reference_entry_id:
+            entry = await connector.get_entry(reference_entry_id)
+            if not entry:
+                raise HTTPException(404, "参考条目未找到（OmniVault 是否在线？）")
+            reference_content = entry.get("raw_content", "") or entry.get("summary_markdown", "") or ""
+        elif reference_text.strip():
+            reference_content = reference_text.strip()
+
+        if not reference_content:
+            raise HTTPException(400, "请提供参考链接（先提取文案）或直接粘贴参考文案")
+
+        if not user_materials.strip():
+            raise HTTPException(400, "请提供你的资料（品牌/产品介绍、卖点等）")
+
+        form_data = await request.form()
+        platform_vals = form_data.getlist("platforms")
+        platform_list = [p for p in platform_vals if p in ALL_PLATFORMS]
+        if not platform_list:
+            platform_list = list(ALL_PLATFORMS)
+
+        job_id = uuid.uuid4().hex[:12]
+        _JOBS[job_id] = {
+            "status": "pending",
+            "phase": "analyzing",
+            "result": {},
+        }
+
+        thread = threading.Thread(
+            target=_run_benchmark_generation,
+            args=(job_id, reference_content, user_materials, platform_list,
+                  tone_variant, reference_entry_id),
+            daemon=True,
+        )
+        thread.start()
 
         return HTMLResponse(
             f'<div id="gen-poll" hx-get="/api/agent/generate/status/{job_id}" '
             f'hx-trigger="every 2s" hx-swap="outerHTML">'
-            f'<div class="flex items-center gap-3 mb-2">{coverage_badge}'
-            f'<span class="text-[11px] text-zinc-400">{bundle.mode} · wiki:{len(bundle.wiki_pages)}页 · rag:{len(bundle.rag_results)}条 · 手动选择:{len(id_list)}条</span></div>'
-            f'<span class="text-[13px] text-zinc-500 dark:text-zinc-400">'
-            f'<span class="inline-block w-4 h-4 border-2 border-zinc-300 dark:border-zinc-600 border-t-zinc-500 dark:border-t-zinc-400 rounded-full animate-spin mr-2 align-middle"></span>'
-            f'正在生成中，请稍候…</span></div>'
+            f'<div class="flex items-center gap-2">'
+            f'<span class="inline-block w-4 h-4 border-2 border-zinc-300 dark:border-zinc-600 border-t-zinc-500 dark:border-t-zinc-400 rounded-full animate-spin"></span>'
+            f'<span class="text-[13px] text-zinc-500 dark:text-zinc-400">🔍 正在分析参考文案的 7 维写作技法…</span>'
+            f'</div></div>'
         )
 
     # ═══════════════════════════════════════════
@@ -504,32 +632,119 @@ def register_routes(app, jinja_env, render_func):
     # ═══════════════════════════════════════════
 
     @app.post("/api/agent/url-submit")
-    async def api_agent_url_submit(url: str = Form(...)):
-        """接收 URL，提交给 OmniVault 处理，返回进度轮询片段。
+    async def api_agent_url_submit(url: str = Form(...), return_to: str = Form("")):
+        """接收 URL，本地抓取 + LLM 提取内容，返回进度轮询片段。
 
-        支持直接粘贴抖音/小红书等平台的分享口令文本，自动提取其中的链接。
-        """
+        独立运行，不依赖 OmniVault。
+        支持粘贴各大平台分享口令/分享文本，自动从中提取链接。"""
         import re
         url = url.strip()
         if not url:
             return HTMLResponse(render_func("agent_url_status.html", error="请输入链接"))
 
-        # 从分享口令中提取 URL（如 "0.28 复制打开抖音... https://v.douyin.com/xxx/ ..."）
+        # ── 已知短链/社媒域名（不含协议时也能识别）──
+        KNOWN_DOMAINS = [
+            # 国内
+            r'v\.douyin\.com', r'www\.douyin\.com',
+            r'xhslink\.com', r'www\.xiaohongshu\.com',
+            r'v\.kuaishou\.com', r'www\.kuaishou\.com',
+            r'b23\.tv', r'www\.bilibili\.com', r'bilibili\.com',
+            r't\.cn', r'weibo\.com', r'm\.weibo\.cn',
+            r'mp\.weixin\.qq\.com',
+            r'www\.zhihu\.com', r'zhihu\.com', r'zh\.sh',
+            r'www\.douban\.com', r'douban\.com',
+            r'www\.huya\.com', r'www\.douyu\.com',
+            r'www\.meituan\.com', r'www\.dianping\.com',
+            # 海外
+            r'youtu\.be', r'www\.youtube\.com', r'youtube\.com', r'm\.youtube\.com',
+            r'www\.instagram\.com', r'instagram\.com',
+            r'x\.com', r'twitter\.com', r'mobile\.twitter\.com', r't\.co',
+            r'www\.tiktok\.com', r'vt\.tiktok\.com', r'tiktok\.com', r'm\.tiktok\.com',
+            r'www\.linkedin\.com', r'linkedin\.com',
+            r'www\.facebook\.com', r'facebook\.com', r'fb\.com', r'fb\.watch',
+            r'www\.reddit\.com', r'reddit\.com', r'redd\.it',
+            r'www\.pinterest\.com', r'pin\.it',
+            r'www\.twitch\.tv', r'twitch\.tv', r'clips\.twitch\.tv',
+            r'medium\.com',
+            r'open\.spotify\.com',
+            r'discord\.com', r'discord\.gg',
+            r'www\.snapchat\.com', r'snapchat\.com',
+            r'www\.threads\.net', r'threads\.net',
+            r'www\.quora\.com', r'quora\.com',
+            r't\.me', r'telegram\.me',
+            r'www\.whatsapp\.com', r'wa\.me',
+            r'github\.com', r'gist\.github\.com',
+            r'news\.ycombinator\.com',
+            r'substack\.com', r'[\w-]+\.substack\.com',
+            r'www\.producthunt\.com',
+            r'www\.behance\.net',
+            r'dribbble\.com',
+            r'vimeo\.com', r'www\.vimeo\.com',
+        ]
+
+        extracted = ""
+
+        # ═══════════════════════════════════════
+        # 策略 1: 完整 https?:// URL
+        # ═══════════════════════════════════════
         url_match = re.search(r'https?://\S+', url)
         if url_match:
-            url = url_match.group(0).rstrip('.,;:!?）)')
-            logger.info("从分享口令中提取链接: %s", url)
-        elif not re.match(r'^https?://', url):
+            extracted = url_match.group(0).rstrip('.,;:!?）)】」》')
+
+        # ═══════════════════════════════════════
+        # 策略 2: 已知短链/社媒域名，不带协议
+        # ═══════════════════════════════════════
+        if not extracted:
+            for domain_pattern in KNOWN_DOMAINS:
+                m = re.search(domain_pattern + r'(?:/\S*)?', url)
+                if m:
+                    raw = m.group(0).rstrip('.,;:!?）)】」》')
+                    extracted = 'https://' + raw
+                    break
+
+        # ═══════════════════════════════════════
+        # 策略 3: 纯 URL（用户直接贴了链接但缺协议）
+        # ═══════════════════════════════════════
+        if not extracted:
+            if url.startswith('www.') or re.match(r'^[A-Za-z0-9-]+\.[a-z]{2,}/', url):
+                extracted = 'https://' + url.split()[0].rstrip('.,;:!?）)】」》')
+
+        # ═══════════════════════════════════════
+        # 策略 4: 泛域名匹配
+        # ═══════════════════════════════════════
+        if not extracted:
+            domain_match = re.search(
+                r'(?:^|\s)'
+                r'((?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+'
+                r'[a-z]{2,}'
+                r'(?:/[^\s，。！？、一-鿿]*)?)',
+                url
+            )
+            if domain_match:
+                raw = domain_match.group(1).rstrip('.,;:!?）)】」》')
+                if '/' in raw or any(
+                    raw.endswith('.' + tld) or '.' + tld + '/' in raw
+                    for tld in ['com', 'cn', 'net', 'org', 'tv', 'io', 'app', 'xyz', 'link']
+                ):
+                    extracted = 'https://' + raw
+
+        if not extracted:
             return HTMLResponse(render_func(
                 "agent_url_status.html",
-                error="未识别到有效链接。请粘贴包含 https:// 的完整链接或平台分享口令。",
+                error=(
+                    "未识别到有效链接。请确认分享口令中包含完整链接。"
+                    "💡 提示：在抖音 App 中点击「分享 → 复制链接」（不是复制口令），"
+                    "粘贴的文本应包含 https://v.douyin.com/... 地址。"
+                ),
             ))
 
-        result = await connector.submit_url(url)
+        logger.info("从分享口令中提取链接: %s", extracted[:120])
+
+        result = await connector.submit_url(extracted)
         if not result:
             return HTMLResponse(render_func(
                 "agent_url_status.html",
-                error="OmniVault 不可用，无法处理链接。请稍后再试，或从下方知识库中选择现有条目。",
+                error="提取服务暂不可用，请稍后重试或直接粘贴文案。",
             ))
 
         jobs = result.get("jobs", [])
@@ -540,35 +755,72 @@ def register_routes(app, jinja_env, render_func):
         if not job_id:
             return HTMLResponse(render_func("agent_url_status.html", error="未获取到有效任务 ID。"))
 
-        return HTMLResponse(render_func("agent_url_status.html", job_id=job_id))
+        return HTMLResponse(render_func("agent_url_status.html", job_id=job_id, return_to=return_to))
 
     @app.get("/api/agent/url-status/{job_id}")
-    async def api_agent_url_status(job_id: str):
-        """轮询 OmniVault 任务状态，完成时返回带重定向的片段。"""
+    async def api_agent_url_status(job_id: str, return_to: str = Query("")):
+        """轮询提取任务状态。对标页完成时不跳转，改局部更新预览。"""
         job = await connector.get_job_status(job_id)
         if not job:
             return HTMLResponse(render_func(
                 "agent_url_status.html",
-                error="无法连接 OmniVault，请稍后重试。",
+                error="提取任务未找到，请重新提交链接。",
             ))
 
         status = job.get("status", "")
-        if status in ("pending", "processing"):
-            return HTMLResponse(render_func("agent_url_status.html", job_id=job_id))
+        if status in ("pending", "processing", "deep_extracting"):
+            return HTMLResponse(render_func("agent_url_status.html", job_id=job_id, return_to=return_to))
         elif status == "done":
             result = job.get("result", {})
             entry_id = result.get("entry_id")
             if not entry_id:
                 return HTMLResponse(render_func(
                     "agent_url_status.html",
-                    error="处理完成但未获取到条目 ID，请检查 OmniVault 日志。",
+                    error="处理完成但未获取到条目 ID。",
                 ))
+
+            # ── 对标页：拉取完整条目，渲染预览片段，不跳转 ──
+            if return_to == "benchmark":
+                entry = await connector.get_entry(entry_id)
+                raw = entry.get("raw_content", "") if entry else ""
+                summary = entry.get("summary_markdown", "") if entry else ""
+
+                # raw_content 可能为空（OmniVault 某些情况下只产出 summary）
+                if not raw and summary:
+                    raw = summary
+                if not raw:
+                    return HTMLResponse(render_func(
+                        "agent_url_status.html",
+                        error=f"提取完成但未获取到文案内容（条目 #{entry_id}）。请确认链接是视频/文章页面，或尝试直接粘贴文案。",
+                    ))
+
+                import json as _json
+                benchmark_done_html = render_func(
+                    "_benchmark_extract_done.html",
+                    entry_id=entry_id,
+                    title=entry.get("title", "") if entry else result.get("title", ""),
+                    preview=raw,
+                    char_count=len(raw),
+                    platform=entry.get("platform", "") if entry else "",
+                    author=entry.get("author", "") if entry else "",
+                    tags=entry.get("tags", "") if entry else "",
+                    raw_content_json=_json.dumps(raw, ensure_ascii=False),
+                )
+                return HTMLResponse(render_func(
+                    "agent_url_status.html",
+                    done=True,
+                    entry_id=entry_id,
+                    return_to=return_to,
+                    benchmark_done_html=benchmark_done_html,
+                ))
+            # ── 内容工厂：跳转到生成页 ──
             return HTMLResponse(render_func(
                 "agent_url_status.html",
                 done=True,
                 entry_id=entry_id,
                 title=result.get("title", ""),
                 summary=result.get("summary_preview", ""),
+                return_to=return_to,
             ))
         else:
             result = job.get("result", {})
@@ -860,18 +1112,101 @@ def _run_generation(job_id, entry, platforms, tone_variant, knowledge_id):
         loop.close()
 
 
-def _run_generation_v2(job_id, bundle, platforms, tone_variant, knowledge_id, generate_title=True, generate_tags=True):
-    """v2 生成后台任务 — 使用 ContextBundle。"""
+def _run_generation_v2_full(job_id, topic, entry_id, entry_ids, platforms, tone_variant, knowledge_id, generate_title, generate_tags, max_related, platform_for_style, selected_ids=""):
+    """v2 完整生成流程 — 知识解析 + 内容生成，全部在后台线程执行。
+
+    这样 API 可以立即返回轮询片段，用户不会因为 resolver 的 LLM 调用而长时间无反馈。
+    """
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
+        # ── 阶段 1: 知识解析 ──
+        _JOBS[job_id]["phase"] = "resolving"
+        from .resolver import KnowledgeResolver
+        resolver = KnowledgeResolver()
+        bundle = loop.run_until_complete(
+            resolver.resolve(
+                topic=topic,
+                entry_id=entry_id,
+                entry_ids=entry_ids,
+                platform=platform_for_style,
+                max_related=max_related,
+            )
+        )
+
+        # 按用户勾选的 selected_ids 过滤关联条目
+        if selected_ids:
+            keep_ids = set()
+            for part in selected_ids.split(","):
+                part = part.strip()
+                if part.isdigit():
+                    keep_ids.add(int(part))
+            if keep_ids:
+                bundle.related_entries_full = [
+                    e for e in bundle.related_entries_full
+                    if e.get("id") in keep_ids
+                ]
+                logger.info("用户勾选过滤: 保留 %d/%d 条", len(bundle.related_entries_full), len(keep_ids))
+
+        _JOBS[job_id]["bundle"] = bundle
+
+        # ── 阶段 2: 内容生成 ──
+        _JOBS[job_id]["phase"] = "generating"
         from .generator import generate_for_platforms_v2
         result = loop.run_until_complete(
-            generate_for_platforms_v2(bundle, platforms, tone_variant, knowledge_id, generate_title=generate_title, generate_tags=generate_tags)
+            generate_for_platforms_v2(
+                bundle, platforms, tone_variant, knowledge_id,
+                generate_title=generate_title, generate_tags=generate_tags,
+            )
         )
-        _JOBS[job_id] = {"status": "done", "result": result}
+        _JOBS[job_id] = {
+            "status": "done",
+            "phase": "done",
+            "result": result,
+            "bundle": bundle,
+        }
     except Exception as e:
         logger.error(f"v2 生成任务失败: {e}", exc_info=True)
-        _JOBS[job_id] = {"status": "failed", "result": {"error": str(e)[:500]}}
+        _JOBS[job_id] = {
+            "status": "failed",
+            "phase": "failed",
+            "result": {"error": str(e)[:500]},
+        }
+    finally:
+        loop.close()
+
+
+def _run_benchmark_generation(job_id, reference_content, user_materials, platforms, tone_variant, knowledge_id):
+    """后台线程：文案对标生成 — 7维分析 + 对标创作。"""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        # ── 阶段 1: 对标分析 ──
+        _JOBS[job_id]["phase"] = "analyzing"
+        from .generator import generate_benchmarked_copy
+        result = loop.run_until_complete(
+            generate_benchmarked_copy(
+                reference_content=reference_content,
+                user_materials=user_materials,
+                platforms=platforms,
+                tone_variant=tone_variant,
+                knowledge_id=knowledge_id,
+            )
+        )
+        # 提取分析结果用于状态展示
+        analysis = result.get("analysis", {})
+        _JOBS[job_id] = {
+            "status": "done",
+            "phase": "done",
+            "result": result,
+            "analysis": analysis,
+        }
+    except Exception as e:
+        logger.error(f"对标生成任务失败: {e}", exc_info=True)
+        _JOBS[job_id] = {
+            "status": "failed",
+            "phase": "failed",
+            "result": {"error": str(e)[:500]},
+        }
     finally:
         loop.close()
