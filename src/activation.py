@@ -15,7 +15,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # ── 配置 ──
-ACTIVATION_SECRET = os.environ.get("ACTIVATION_SECRET", "omnicast-os-2026")
+ACTIVATION_SECRET = os.environ.get("ACTIVATION_SECRET", "")
 ACTIVATION_FILE = Path(os.environ.get("ACTIVATION_FILE", "/data/.activated"))
 ACTIVATION_ENABLED = os.environ.get("ACTIVATION_ENABLED", "true").lower() in ("1", "true", "yes")
 
